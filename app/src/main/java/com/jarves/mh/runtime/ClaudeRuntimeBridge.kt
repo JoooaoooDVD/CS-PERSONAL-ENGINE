@@ -164,6 +164,7 @@ class ClaudeRuntimeBridge(
             val guestWorkspacePath = "/workspace/$projectSlug"
             val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind)
 
+            val fullAccess = com.jarves.mh.data.AppPreferences(context).fullAccessTerminalEnabled
             val command = buildList {
                 add(launch.executable)
                 // Do not use --bare here: Claude Code bare mode ignores CLAUDE_CODE_OAUTH_TOKEN,
@@ -174,10 +175,13 @@ class ClaudeRuntimeBridge(
                 add("stream-json")
                 add("--include-partial-messages")
                 add("--verbose")
+                if (fullAccess) {
+                    add("--dangerously-skip-permissions")
+                }
                 add("--model")
                 add(launch.environment["ANTHROPIC_MODEL"] ?: provider.model)
                 add("--max-turns")
-                add("25")
+                add(if (fullAccess) "80" else "25")
             }
             Log.d("ClaudeBridge", "Launching command: $command")
             val process = installer.process(

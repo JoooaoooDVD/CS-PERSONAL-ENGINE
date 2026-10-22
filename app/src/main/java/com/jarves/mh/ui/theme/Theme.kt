@@ -19,6 +19,15 @@ val EngineEmerald = Color(0xFF34D399)
 val EngineAmber = Color(0xFFF59E0B)
 val EngineViolet = Color(0xFF818CF8)
 
+// Authentic Google Antigravity Cosmic Signature Palette
+val AntigravityBlue = Color(0xFF5B8DEF)
+val AntigravityViolet = Color(0xFF9B72FF)
+val AntigravityAqua = Color(0xFF36E4DA)
+val AntigravityBg = Color(0xFF0A0D14)
+val AntigravitySurface = Color(0xFF111622)
+val AntigravityCard = Color(0xFF171E2E)
+val AntigravityBorder = Color(0xFF253047)
+
 // Retained aliases used across UI files, upgraded to Obsidian/Titanium aesthetics
 val PocketOrange = Color(0xFF38BDF8)
 val PocketBlue = Color(0xFF818CF8)
@@ -111,16 +120,65 @@ private val LightColors = lightColorScheme(
     outlineVariant = Color(0xFFE2E8F0),
 )
 
+private val AntigravityCosmicDarkColors = darkColorScheme(
+    primary = AntigravityBlue,
+    onPrimary = Color(0xFF061024),
+    primaryContainer = Color(0xFF182442),
+    onPrimaryContainer = Color(0xFFDCE7FF),
+    secondary = AntigravityViolet,
+    onSecondary = Color(0xFF130B29),
+    secondaryContainer = Color(0xFF231C3E),
+    onSecondaryContainer = Color(0xFFE9DDFF),
+    tertiary = AntigravityAqua,
+    onTertiary = Color(0xFF032826),
+    tertiaryContainer = Color(0xFF0D2F33),
+    onTertiaryContainer = Color(0xFFB8FFF9),
+    background = AntigravityBg,
+    onBackground = Color(0xFFEEF2FF),
+    surface = AntigravitySurface,
+    onSurface = Color(0xFFEEF2FF),
+    surfaceVariant = AntigravityCard,
+    onSurfaceVariant = Color(0xFF9AA8C7),
+    surfaceContainerLowest = Color(0xFF06080E),
+    surfaceContainerLow = Color(0xFF0D111B),
+    surfaceContainer = Color(0xFF131927),
+    surfaceContainerHigh = Color(0xFF192133),
+    surfaceContainerHighest = Color(0xFF212B42),
+    outline = AntigravityBorder,
+    outlineVariant = Color(0xFF1C2438),
+    error = Color(0xFFFF7B7B),
+    onError = Color(0xFF2D0606),
+    errorContainer = Color(0xFF3B1218),
+    onErrorContainer = Color(0xFFFECACA),
+)
+
+private val AntigravityCosmicAmoledColors = AntigravityCosmicDarkColors.copy(
+    background = Color(0xFF000000),
+    surface = Color(0xFF0A0D16),
+    surfaceVariant = Color(0xFF121827),
+    surfaceContainerLowest = Color(0xFF000000),
+    surfaceContainerLow = Color(0xFF070A12),
+    surfaceContainer = Color(0xFF0E1320),
+)
+
 enum class AppThemeMode { SYSTEM, DARK, AMOLED, LIGHT }
 
 @Composable
-fun PocketTheme(themeMode: AppThemeMode = AppThemeMode.DARK, content: @Composable () -> Unit) {
+fun PocketTheme(
+    themeMode: AppThemeMode = AppThemeMode.DARK,
+    antigravityMode: Boolean = false,
+    content: @Composable () -> Unit,
+) {
     val systemDark = isSystemInDarkTheme()
     val scheme = when (themeMode) {
-        AppThemeMode.DARK -> ObsidianDarkColors
-        AppThemeMode.AMOLED -> AmoledPitchBlackColors
+        AppThemeMode.DARK -> if (antigravityMode) AntigravityCosmicDarkColors else ObsidianDarkColors
+        AppThemeMode.AMOLED -> if (antigravityMode) AntigravityCosmicAmoledColors else AmoledPitchBlackColors
         AppThemeMode.LIGHT -> LightColors
-        AppThemeMode.SYSTEM -> if (systemDark) ObsidianDarkColors else LightColors
+        AppThemeMode.SYSTEM -> if (systemDark) {
+            if (antigravityMode) AntigravityCosmicDarkColors else ObsidianDarkColors
+        } else {
+            LightColors
+        }
     }
     val isDark = themeMode != AppThemeMode.LIGHT && (themeMode != AppThemeMode.SYSTEM || systemDark)
 

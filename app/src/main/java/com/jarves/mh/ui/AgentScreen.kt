@@ -195,9 +195,20 @@ fun AgentScreen(
     onRefreshAntigravityModels: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit = {},
     onSetAntigravityEffort: (String) -> Unit = {},
+    onSaveCustomProvider: (com.jarves.mh.model.SavedCustomProvider, String) -> Unit = { _, _ -> },
+    onActivateCustomProvider: (String) -> Unit = {},
+    onDeleteCustomProvider: (String) -> Unit = {},
+    getCustomProviderApiKey: (String) -> String = { "" },
+    onRunCliInTerminal: (String) -> Unit = {},
+    onAddCustomCli: (String, String, String) -> Unit = { _, _, _ -> },
+    onRemoveCustomCli: (String) -> Unit = {},
+    onSetFullAccessTerminal: (Boolean) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    var showCustomProviderSheet by rememberSaveable { mutableStateOf(false) }
+    var editingCustomProviderId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showCliMarketplaceSheet by rememberSaveable { mutableStateOf(false) }
     var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
     val selectedProviderTitle = stringResource(selectedKind.titleRes())
     val selectedProviderVerifiedMessage = stringResource(
@@ -1165,6 +1176,131 @@ fun AgentScreen(
                 }
             }
 
+            // ── 2B. Universal Custom Providers Studio Card (ALWAYS visible even in Antigravity!) ──
+            item {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.45f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Custom AI Providers",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 15.5.sp,
+                                )
+                                Text(
+                                    "Add unlimited OpenAI, Groq, Together, Ollama, OpenRouter & custom endpoints",
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    editingCustomProviderId = null
+                                    showCustomProviderSheet = true
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 13.dp, vertical = 8.dp),
+                            ) {
+                                Text("+ Add Custom", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        if (state.savedCustomProviders.isNotEmpty()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                state.savedCustomProviders.forEach { saved ->
+                                    val isActive = state.agentKind != AgentKind.ANTIGRAVITY && state.activeCustomProviderId == saved.id
+                                    Surface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { onActivateCustomProvider(saved.id) },
+                                        shape = RoundedCornerShape(13.dp),
+                                        color = if (isActive) PocketOrange.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                                        border = BorderStroke(1.dp, if (isActive) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Column(Modifier.weight(1f)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    Text(saved.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                    if (isActive) {
+                                                        Text("ACTIVE", fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold, color = PocketOrange)
+                                                    }
+                                                }
+                                                Text(
+                                                    "${saved.model} · ${saved.baseUrl}",
+                                                    fontSize = 11.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                            }
+                                            OutlinedButton(
+                                                onClick = {
+                                                    editingCustomProviderId = saved.id
+                                                    showCustomProviderSheet = true
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                shape = RoundedCornerShape(9.dp),
+                                            ) {
+                                                Text(if (isActive) "Edit" else "Use / Edit", fontSize = 11.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── 2C. Full Linux Root Terminal & Any-CLI Marketplace Card ──
+            item {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Full Linux Root & External CLI Agents", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                                Text(
+                                    "Unrestricted terminal & AI execution · Install Codex CLI, Gemini CLI, OpenCode, Aider, gh, or any binary",
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = state.fullAccessTerminalEnabled,
+                                onCheckedChange = onSetFullAccessTerminal,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { showCliMarketplaceSheet = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("Open Linux CLI & Coding Agent Store", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
             // ── 3. Runtime Updates Card ──
             item {
                 AgentUpdateBlock(
@@ -1192,6 +1328,31 @@ fun AgentScreen(
                 }
             }
         }
+    }
+
+    if (showCustomProviderSheet) {
+        val editing = state.savedCustomProviders.firstOrNull { it.id == editingCustomProviderId }
+        CustomProviderStudioSheet(
+            editingProvider = editing,
+            initialApiKey = editing?.let { getCustomProviderApiKey(it.id) }.orEmpty(),
+            savedProviders = state.savedCustomProviders,
+            activeCustomProviderId = state.activeCustomProviderId,
+            onDiscoverModels = onDiscoverModels,
+            onSaveAndActivate = onSaveCustomProvider,
+            onActivateExisting = onActivateCustomProvider,
+            onDeleteExisting = onDeleteCustomProvider,
+            onDismiss = { showCustomProviderSheet = false },
+        )
+    }
+
+    if (showCliMarketplaceSheet) {
+        CliMarketplaceSheet(
+            savedCustomClis = state.savedCustomClis,
+            onRunCommandInTerminal = onRunCliInTerminal,
+            onAddCustomCli = onAddCustomCli,
+            onRemoveCustomCli = onRemoveCustomCli,
+            onDismiss = { showCliMarketplaceSheet = false },
+        )
     }
 }
 

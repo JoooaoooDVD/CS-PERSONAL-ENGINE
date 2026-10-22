@@ -40,6 +40,9 @@ import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.SavedCustomProvider
+import com.jarves.mh.model.CliToolPackage
+import com.jarves.mh.model.BUILTIN_CLI_PACKAGES
 import com.jarves.mh.model.GitStatusSnapshot
 import com.jarves.mh.model.UNIVERSAL_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.RuntimeEvent
@@ -56,6 +59,7 @@ import com.jarves.mh.network.GitHubRepository
 import com.jarves.mh.runtime.ClaudeRuntimeBridge
 import com.jarves.mh.runtime.DshRuntimeBridge
 import com.jarves.mh.runtime.GitWorkspaceManager
+import com.jarves.mh.runtime.InteractivePtySession
 import com.jarves.mh.runtime.AgentRegistry
 import com.jarves.mh.runtime.AgentUpdateInfo
 import com.jarves.mh.runtime.AntigravityAuthController
@@ -418,6 +422,15 @@ data class AppUiState(
     val detectedServerPorts: List<Int> = emptyList(),
     val streamingAssistantPreview: String? = null,
     val activeToolHeadline: String? = null,
+    val fullAccessTerminalEnabled: Boolean = true,
+    val interactivePtyMode: Boolean = true,
+    val savedCustomProviders: List<SavedCustomProvider> = emptyList(),
+    val activeCustomProviderId: String = "",
+    val savedCustomClis: List<CliToolPackage> = emptyList(),
+    val ptyTerminalBuffer: String = "",
+    val ptyTerminalAlive: Boolean = false,
+    val projectPtyTerminalBuffer: String = "",
+    val projectPtyTerminalAlive: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -430,10 +443,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
-    private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
-    private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
+    private fun resolveProviderSecret(profile: ProviderProfile): String? {
+        val activeCustomId = preferences.activeCustomProviderId
+        if (activeCustomId.isNotBlank() && profile.kind in UNIVERSAL_PROTOCOL_PROVIDERS) {
+            val savedCustom = preferences.loadSavedCustomProviders().firstOrNull { it.id == activeCustomId }
+            if (savedCustom != null && savedCustom.baseUrl.trim() == profile.baseUrl.trim()) {
+                vault.get(savedCustom.vaultKeyId)?.takeIf(String::isNotBlank)?.let { return it }
+            }
+        }
+        return vault.get(profile.kind.name)
+    }
+    private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> resolveProviderSecret(profile) }
+    private val dshRuntime = DshRuntimeBridge(application) { profile -> resolveProviderSecret(profile) }
     private val installer = RuntimeInstaller(application)
     private val gitManager = GitWorkspaceManager(application, installer, vault, preferences)
+    private var quickPtySession: InteractivePtySession? = null
+    private var projectPtySession: InteractivePtySession? = null
+    private var projectPtySessionProjectId: String? = null
     private val antigravityRuntime = AntigravityRuntimeBridge(
         application,
         model = { _state.value.antigravityModel },
@@ -529,6 +555,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hasGitHubPat = vault.get(RuntimeInstaller.GITHUB_PAT_VAULT_KEY)?.isNotBlank() == true,
             githubAuthorName = preferences.githubName,
             githubAuthorEmail = preferences.githubEmail,
+            fullAccessTerminalEnabled = preferences.fullAccessTerminalEnabled,
+            interactivePtyMode = preferences.interactivePtyMode,
+            savedCustomProviders = preferences.loadSavedCustomProviders(),
+            activeCustomProviderId = preferences.activeCustomProviderId,
+            savedCustomClis = preferences.loadSavedCustomClis(),
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
             }.toSet() + DevStack.WEB,
@@ -776,7 +807,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        if (isDestructiveTerminalCommand(normalized)) {
+        if (!_state.value.fullAccessTerminalEnabled && isDestructiveTerminalCommand(normalized)) {
             _state.update { it.copy(pendingTerminalCommand = normalized) }
         } else {
             runProjectTerminalCommand(normalized)
@@ -2446,7 +2477,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         preferences.saveProvider(saved, _state.value.agentKind)
         preferences.onboardingComplete = true
-        _state.update { it.copy(onboardingComplete = true, provider = saved, startupStage = StartupStage.READY) }
+        val matchingCustom = preferences.loadSavedCustomProviders().firstOrNull {
+            it.id == preferences.activeCustomProviderId &&
+                it.baseUrl.trim() == saved.baseUrl.trim() &&
+                it.model.trim() == saved.model.trim()
+        }
+        if (matchingCustom == null) {
+            preferences.activeCustomProviderId = ""
+        }
+        _state.update {
+            it.copy(
+                onboardingComplete = true,
+                provider = saved,
+                activeCustomProviderId = preferences.activeCustomProviderId,
+                startupStage = StartupStage.READY,
+            )
+        }
         refreshActiveApiKey(profile.kind)
         autoPingApi()
     }
@@ -5055,6 +5101,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendLine("These files were explicitly attached by the user. Inspect them only as needed for the request.")
                 append("</attached_files>")
             }
+            if (snapshot.fullAccessTerminalEnabled) {
+                appendLine()
+                appendLine()
+                appendLine("<linux_full_root_capabilities>")
+                appendLine("Full unrestricted Ubuntu arm64 root shell access (uid=0 via PRoot) is enabled.")
+                appendLine("You may run any bash command, binary, compiler, Python/Node/Rust/Go tool, curl/wget, git/gh, background service, or package manager (`apt-get`, `npm install -g`, `pip install`, `uv`, `cargo`, `bun`).")
+                appendLine("Global CLI paths `/root/.local/bin`, `/root/.npm-global/bin`, `/root/.bun/bin`, `/root/.cargo/bin`, and `/usr/local/bin` are active in PATH.")
+                append("</linux_full_root_capabilities>")
+            }
             if (snapshot.customSystemInstructions.isNotBlank()) {
                 appendLine()
                 appendLine()
@@ -5714,7 +5769,262 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.saveProjectChats(project.id, _state.value.projectChats)
     }
 
+    // ── v3.0 Full-Access Terminal, Interactive PTY Shell, Custom Provider Registry & CLI Hub ──
+
+    fun setFullAccessTerminalEnabled(enabled: Boolean) {
+        preferences.fullAccessTerminalEnabled = enabled
+        _state.update { it.copy(fullAccessTerminalEnabled = enabled) }
+    }
+
+    fun setInteractivePtyMode(enabled: Boolean) {
+        preferences.interactivePtyMode = enabled
+        _state.update { it.copy(interactivePtyMode = enabled) }
+        if (enabled) {
+            if (_state.value.activeProject != null) ensureProjectPtyStarted() else ensureQuickPtyStarted()
+        }
+    }
+
+    fun ensureQuickPtyStarted() {
+        val current = quickPtySession
+        if (current != null) {
+            if (current.ensureStarted()) {
+                _state.update { it.copy(ptyTerminalAlive = true) }
+            }
+            return
+        }
+        val workspace = File(getApplication<Application>().filesDir, "workspaces").apply { mkdirs() }
+        val session = InteractivePtySession(
+            installer = installer,
+            scope = viewModelScope,
+            workspaceDir = workspace,
+            guestWorkspacePath = "/workspace",
+        )
+        quickPtySession = session
+        viewModelScope.launch {
+            session.buffer.collect { text ->
+                _state.update { it.copy(ptyTerminalBuffer = text) }
+            }
+        }
+        viewModelScope.launch {
+            session.alive.collect { alive ->
+                _state.update { it.copy(ptyTerminalAlive = alive) }
+            }
+        }
+        session.ensureStarted()
+    }
+
+    fun sendQuickPtyCommand(command: String) {
+        if (command.trim() == "clear") {
+            clearQuickPty()
+            return
+        }
+        ensureQuickPtyStarted()
+        quickPtySession?.sendLine(command)
+    }
+
+    fun sendQuickPtyRaw(raw: String) {
+        ensureQuickPtyStarted()
+        quickPtySession?.sendRaw(raw)
+    }
+
+    fun interruptQuickPty() {
+        quickPtySession?.sendInterrupt()
+    }
+
+    fun clearQuickPty() {
+        quickPtySession?.clearBuffer()
+    }
+
+    fun restartQuickPty() {
+        ensureQuickPtyStarted()
+        quickPtySession?.restart()
+    }
+
+    fun ensureProjectPtyStarted() {
+        val project = _state.value.activeProject ?: return
+        val existing = projectPtySession
+        if (existing != null && projectPtySessionProjectId == project.id) {
+            if (existing.ensureStarted()) {
+                _state.update { it.copy(projectPtyTerminalAlive = true) }
+            }
+            return
+        }
+        existing?.close()
+        val workspace = projectWorkspaceRoot(project)
+        val guestRoot = projectGuestRoot(project)
+        val session = InteractivePtySession(
+            installer = installer,
+            scope = viewModelScope,
+            workspaceDir = workspace,
+            guestWorkspacePath = guestRoot,
+            onPreviewUrlDetected = { url ->
+                val port = url.substringAfterLast(':').trimEnd('/').toIntOrNull()
+                _state.update { current ->
+                    current.copy(
+                        previewReady = true,
+                        previewUrl = url,
+                        detectedServerPorts = if (port != null && port !in current.detectedServerPorts) {
+                            current.detectedServerPorts + port
+                        } else {
+                            current.detectedServerPorts
+                        },
+                    )
+                }
+            },
+        )
+        projectPtySession = session
+        projectPtySessionProjectId = project.id
+        viewModelScope.launch {
+            session.buffer.collect { text ->
+                if (projectPtySessionProjectId == project.id) {
+                    _state.update { it.copy(projectPtyTerminalBuffer = text) }
+                }
+            }
+        }
+        viewModelScope.launch {
+            session.alive.collect { alive ->
+                if (projectPtySessionProjectId == project.id) {
+                    _state.update { it.copy(projectPtyTerminalAlive = alive) }
+                }
+            }
+        }
+        session.ensureStarted()
+    }
+
+    fun sendProjectPtyCommand(command: String) {
+        if (command.trim() == "clear") {
+            clearProjectPty()
+            return
+        }
+        ensureProjectPtyStarted()
+        projectPtySession?.sendLine(command)
+    }
+
+    fun sendProjectPtyRaw(raw: String) {
+        ensureProjectPtyStarted()
+        projectPtySession?.sendRaw(raw)
+    }
+
+    fun interruptProjectPty() {
+        projectPtySession?.sendInterrupt()
+    }
+
+    fun clearProjectPty() {
+        projectPtySession?.clearBuffer()
+    }
+
+    fun restartProjectPty() {
+        ensureProjectPtyStarted()
+        projectPtySession?.restart()
+    }
+
+    fun getCustomProviderApiKey(providerId: String): String =
+        vault.get("CUSTOM_PROVIDER_$providerId").orEmpty()
+
+    fun saveAndActivateCustomProvider(entry: SavedCustomProvider, apiKey: String) {
+        val cleanEntry = entry.copy(
+            name = entry.name.trim().ifBlank { "Custom Provider" },
+            baseUrl = entry.baseUrl.trim(),
+            model = entry.model.trim(),
+            customHeaders = entry.customHeaders.trim(),
+        )
+        val currentList = preferences.loadSavedCustomProviders().toMutableList()
+        val existingIdx = currentList.indexOfFirst { it.id == cleanEntry.id }
+        if (existingIdx >= 0) {
+            currentList[existingIdx] = cleanEntry
+        } else {
+            currentList.add(0, cleanEntry)
+        }
+        preferences.saveSavedCustomProviders(currentList)
+        if (apiKey.isNotBlank()) {
+            vault.put(cleanEntry.vaultKeyId, apiKey.trim())
+        }
+        val effectiveSecret = apiKey.trim().ifBlank { vault.get(cleanEntry.vaultKeyId).orEmpty() }
+        // If Antigravity is currently selected, switch to an API-compatible agent automatically so
+        // the user's custom provider works immediately with 1 tap.
+        if (_state.value.agentKind == AgentKind.ANTIGRAVITY && !_state.value.isRunning) {
+            val targetAgent = when {
+                installer.isAgentInstalled(AgentKind.CLAUDE_CODE) -> AgentKind.CLAUDE_CODE
+                installer.isAgentInstalled(AgentKind.DEEPSEEK_HARNESS) -> AgentKind.DEEPSEEK_HARNESS
+                else -> AgentKind.CLAUDE_CODE
+            }
+            preferences.agentKind = targetAgent.stableId
+            _state.update { it.copy(agentKind = targetAgent) }
+        }
+        preferences.activeCustomProviderId = cleanEntry.id
+        val profile = cleanEntry.toProviderProfile()
+        if (effectiveSecret.isNotBlank()) {
+            vault.put(profile.kind.name, effectiveSecret)
+        }
+        val savedProfile = profile.copy(
+            hasSecret = effectiveSecret.isNotBlank() || cleanEntry.wireProtocol.startsWith("openai"),
+        )
+        preferences.saveProvider(savedProfile, _state.value.agentKind)
+        preferences.onboardingComplete = true
+        _state.update {
+            it.copy(
+                onboardingComplete = true,
+                startupStage = StartupStage.READY,
+                provider = savedProfile,
+                savedCustomProviders = currentList,
+                activeCustomProviderId = cleanEntry.id,
+                toastMessage = "Activated custom provider: ${cleanEntry.name}",
+            )
+        }
+        refreshActiveApiKey(savedProfile.kind)
+        autoPingApi()
+    }
+
+    fun activateCustomProvider(providerId: String) {
+        val found = preferences.loadSavedCustomProviders().firstOrNull { it.id == providerId } ?: return
+        val secret = vault.get(found.vaultKeyId).orEmpty()
+        saveAndActivateCustomProvider(found, secret)
+    }
+
+    fun deleteCustomProvider(providerId: String) {
+        val remaining = preferences.loadSavedCustomProviders().filterNot { it.id == providerId }
+        preferences.saveSavedCustomProviders(remaining)
+        vault.remove("CUSTOM_PROVIDER_$providerId")
+        val nextActiveId = if (preferences.activeCustomProviderId == providerId) "" else preferences.activeCustomProviderId
+        preferences.activeCustomProviderId = nextActiveId
+        _state.update {
+            it.copy(
+                savedCustomProviders = remaining,
+                activeCustomProviderId = nextActiveId,
+            )
+        }
+    }
+
+    fun addCustomCliPackage(
+        name: String,
+        installCommand: String,
+        launchCommand: String,
+        checkBinary: String = "",
+    ) {
+        val pkg = CliToolPackage(
+            id = "custom-${java.util.UUID.randomUUID()}",
+            name = name.trim().ifBlank { "Custom CLI" },
+            category = "Custom CLI",
+            description = installCommand.trim(),
+            installCommand = installCommand.trim(),
+            launchCommand = launchCommand.trim().ifBlank { installCommand.trim() },
+            checkBinary = checkBinary.trim(),
+            isCustom = true,
+        )
+        val updated = listOf(pkg) + preferences.loadSavedCustomClis()
+        preferences.saveSavedCustomClis(updated)
+        _state.update { it.copy(savedCustomClis = updated, toastMessage = "Added CLI: ${pkg.name}") }
+    }
+
+    fun removeCustomCliPackage(id: String) {
+        val updated = preferences.loadSavedCustomClis().filterNot { it.id == id }
+        preferences.saveSavedCustomClis(updated)
+        _state.update { it.copy(savedCustomClis = updated) }
+    }
+
     override fun onCleared() {
+        quickPtySession?.close()
+        projectPtySession?.close()
         stopAndroidLogcat()
         super.onCleared()
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
+import com.jarves.mh.model.CliToolPackage
 import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectType
@@ -11,6 +12,7 @@ import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.SavedCustomProvider
 import com.jarves.mh.model.defaultDshApiForProvider
 import com.jarves.mh.model.projectSlug
 import com.jarves.mh.model.providersForAgent
@@ -95,6 +97,88 @@ class AppPreferences(private val context: Context) {
     var customSystemInstructions: String
         get() = preferences.getString("cs_custom_system_instructions", "") ?: ""
         set(value) { preferences.edit().putString("cs_custom_system_instructions", value).apply() }
+
+    /** Unrestricted Full Root Terminal & AI Tool Execution mode (enabled by default in CS Engine v3). */
+    var fullAccessTerminalEnabled: Boolean
+        get() = preferences.getBoolean("cs_full_access_terminal_enabled", true)
+        set(value) { preferences.edit().putBoolean("cs_full_access_terminal_enabled", value).apply() }
+
+    /** Persistent interactive PTY shell mode in Terminal (supports codex/gemini/opencode/aider/python/ssh/etc.). */
+    var interactivePtyMode: Boolean
+        get() = preferences.getBoolean("cs_interactive_pty_mode", true)
+        set(value) { preferences.edit().putBoolean("cs_interactive_pty_mode", value).apply() }
+
+    /** Currently active user-created Custom Provider ID (empty when using a standard built-in provider). */
+    var activeCustomProviderId: String
+        get() = preferences.getString("cs_active_custom_provider_id", "") ?: ""
+        set(value) { preferences.edit().putString("cs_active_custom_provider_id", value).apply() }
+
+    fun loadSavedCustomProviders(): List<SavedCustomProvider> = runCatching {
+        val raw = preferences.getString("cs_saved_custom_providers_json", null) ?: return emptyList()
+        val array = JSONArray(raw)
+        (0 until array.length()).mapNotNull { idx ->
+            val obj = array.optJSONObject(idx) ?: return@mapNotNull null
+            SavedCustomProvider(
+                id = obj.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
+                name = obj.optString("name", "Custom Provider"),
+                baseUrl = obj.optString("baseUrl", ""),
+                model = obj.optString("model", ""),
+                wireProtocol = obj.optString("wireProtocol", "openai-completions"),
+                customHeaders = obj.optString("customHeaders", ""),
+                createdAtMillis = obj.optLong("createdAtMillis", 0L),
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    fun saveSavedCustomProviders(items: List<SavedCustomProvider>) {
+        val array = JSONArray()
+        items.forEach { entry ->
+            array.put(JSONObject().apply {
+                put("id", entry.id)
+                put("name", entry.name)
+                put("baseUrl", entry.baseUrl)
+                put("model", entry.model)
+                put("wireProtocol", entry.wireProtocol)
+                put("customHeaders", entry.customHeaders)
+                put("createdAtMillis", entry.createdAtMillis)
+            })
+        }
+        preferences.edit().putString("cs_saved_custom_providers_json", array.toString()).apply()
+    }
+
+    fun loadSavedCustomClis(): List<CliToolPackage> = runCatching {
+        val raw = preferences.getString("cs_saved_custom_clis_json", null) ?: return emptyList()
+        val array = JSONArray(raw)
+        (0 until array.length()).mapNotNull { idx ->
+            val obj = array.optJSONObject(idx) ?: return@mapNotNull null
+            CliToolPackage(
+                id = obj.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
+                name = obj.optString("name", "Custom CLI"),
+                category = obj.optString("category", "Custom CLI"),
+                description = obj.optString("description", "Custom Linux CLI package"),
+                installCommand = obj.optString("installCommand", ""),
+                launchCommand = obj.optString("launchCommand", ""),
+                checkBinary = obj.optString("checkBinary", ""),
+                isCustom = true,
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    fun saveSavedCustomClis(items: List<CliToolPackage>) {
+        val array = JSONArray()
+        items.forEach { cli ->
+            array.put(JSONObject().apply {
+                put("id", cli.id)
+                put("name", cli.name)
+                put("category", cli.category)
+                put("description", cli.description)
+                put("installCommand", cli.installCommand)
+                put("launchCommand", cli.launchCommand)
+                put("checkBinary", cli.checkBinary)
+            })
+        }
+        preferences.edit().putString("cs_saved_custom_clis_json", array.toString()).apply()
+    }
 
     fun saveAgentConversation(agent: AgentKind, projectId: String, chatId: String, conversationId: String?) {
         val key = agentConversationKey(agent, projectId, chatId)

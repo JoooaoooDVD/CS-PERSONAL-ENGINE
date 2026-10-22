@@ -1551,6 +1551,8 @@ class RuntimeInstaller(private val context: Context) {
         writeAndroidGradleConfiguration(rootfs)
         ensureWorkspaceTrust(guestWorkspacePath)
         ensureGitAskPassAndConfig(rootfs)
+        ensureUnrestrictedLinuxShellEnv(rootfs)
+        runCatching { writeResolver(rootfs) }
         val bridge = File(context.filesDir, "runtime-bridge").apply { mkdirs() }
         val args = buildList {
             add(proot.absolutePath)
@@ -1594,7 +1596,9 @@ class RuntimeInstaller(private val context: Context) {
             environment = buildMap {
                 put("HOME", "/root")
                 val androidReady = File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION
-                val basePath = "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                val basePath = "/root/.local/bin:/root/.npm-global/bin:/root/.bun/bin:/root/.cargo/bin:/root/.deno/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                put("NPM_CONFIG_PREFIX", "/root/.npm-global")
+                put("PIP_BREAK_SYSTEM_PACKAGES", "1")
                 if (androidReady) {
                     put("ANDROID_HOME", "/root/android-sdk")
                     put("ANDROID_SDK_ROOT", "/root/android-sdk")
@@ -1714,7 +1718,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
                 "permissions",
                 JSONObject()
                     .put("allow", claudeWorkspaceToolRules())
-                    .put("defaultMode", "acceptEdits"),
+                    .put("defaultMode", "bypassPermissions"),
             )
             .put(
                 "hooks",
@@ -1722,7 +1726,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
                     "PermissionRequest",
                     org.json.JSONArray().put(
                         JSONObject()
-                            .put("matcher", "Bash|Edit|Write|NotebookEdit")
+                            .put("matcher", ".*")
                             .put(
                                 "hooks",
                                 org.json.JSONArray().put(
@@ -1761,21 +1765,93 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
         stateFile.writeText(state.toString())
     }
 
+    private fun ensureUnrestrictedLinuxShellEnv(runtimeRootfs: File) {
+        runCatching {
+            listOf(
+                "root/.local/bin",
+                "root/.npm-global/bin",
+                "root/.bun/bin",
+                "root/.cargo/bin",
+                "root/.deno/bin",
+                "root/go/bin",
+                "usr/local/bin",
+                "etc/profile.d",
+            ).forEach { rel -> File(runtimeRootfs, rel).mkdirs() }
+
+            val npmrc = File(runtimeRootfs, "root/.npmrc")
+            if (!npmrc.isFile || "prefix=" !in npmrc.readTextOrNull().orEmpty()) {
+                npmrc.writeText("prefix=/root/.npm-global\nfund=false\naudit=false\n")
+            }
+
+            // Provide a transparent root passthrough `sudo` in PRoot (-0) when real sudo is absent
+            // so `sudo apt install ...`, `sudo npm ...`, and `curl ... | sudo bash` never fail.
+            val usrBinSudo = File(runtimeRootfs, "usr/bin/sudo")
+            val localSudo = File(runtimeRootfs, "usr/local/bin/sudo")
+            if (!usrBinSudo.isFile && !localSudo.isFile) {
+                localSudo.writeText(
+                    """#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -E|-n|-H|-S|-i|-s) shift ;;
+    -u|-g|-p) shift 2 ;;
+    --) shift; break ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+exec "$@"
+""",
+                )
+                Os.chmod(localSudo.absolutePath, 0b111101101)
+            }
+
+            val profileEnv = File(runtimeRootfs, "etc/profile.d/cs-engine-env.sh")
+            val envScript = """
+export PATH="/root/.local/bin:/root/.npm-global/bin:/root/.bun/bin:/root/.cargo/bin:/root/.deno/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${'$'}PATH"
+export NPM_CONFIG_PREFIX="/root/.npm-global"
+export PIP_BREAK_SYSTEM_PACKAGES=1
+export DEBIAN_FRONTEND=noninteractive
+""".trimIndent() + "\n"
+            if (profileEnv.readTextOrNull() != envScript) {
+                profileEnv.writeText(envScript)
+                Os.chmod(profileEnv.absolutePath, 0b111101101)
+            }
+
+            val bashrc = File(runtimeRootfs, "root/.bashrc")
+            val marker = "# cs-personal-engine-env"
+            val existingBashrc = bashrc.readTextOrNull().orEmpty()
+            if (marker !in existingBashrc) {
+                bashrc.writeText(
+                    existingBashrc + "\n$marker\n[ -f /etc/profile.d/cs-engine-env.sh ] && . /etc/profile.d/cs-engine-env.sh\n",
+                )
+            }
+        }
+    }
+
     private fun claudeWorkspaceToolRules() = org.json.JSONArray().apply {
         put("Bash")
         put("Edit")
+        put("MultiEdit")
         put("Write")
         put("NotebookEdit")
         put("Read")
         put("Glob")
         put("Grep")
+        put("LS")
+        put("WebFetch")
+        put("WebSearch")
+        put("Task")
+        put("TodoRead")
+        put("TodoWrite")
     }
 
-    private fun writeResolver() {
+    private fun writeResolver(targetRootfs: File = rootfs) {
         val manager = context.getSystemService(ConnectivityManager::class.java)
         val dns = manager.getLinkProperties(manager.activeNetwork)?.dnsServers.orEmpty()
-        val servers = dns.mapNotNull { it.hostAddress }.ifEmpty { listOf("8.8.8.8", "1.1.1.1") }
-        File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
+        val servers = (dns.mapNotNull { it.hostAddress }.filter { "%" !in it } + listOf("8.8.8.8", "1.1.1.1"))
+            .distinct()
+        val etcDir = File(targetRootfs, "etc").apply { mkdirs() }
+        File(etcDir, "resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
     }
 
     private fun extractRootfs(archive: File, destination: File) {

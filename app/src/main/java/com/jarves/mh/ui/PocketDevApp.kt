@@ -259,6 +259,11 @@ import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.network.GitHubRepository
+import com.jarves.mh.model.SavedCustomProvider
+import com.jarves.mh.ui.theme.AntigravityBlue
+import com.jarves.mh.ui.theme.AntigravityViolet
+import com.jarves.mh.ui.theme.EngineCyan
+import com.jarves.mh.ui.theme.EngineEmerald
 import com.jarves.mh.ui.theme.PocketBlue
 import com.jarves.mh.ui.theme.PocketGreen
 import com.jarves.mh.ui.theme.PocketOrange
@@ -478,6 +483,24 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onGitSetRemoteUrl = viewModel::gitSetRemoteUrl,
             onGitCreateRepoAndPush = viewModel::gitCreateRepoAndPush,
             onGitAutoCommitMsg = viewModel::gitAutoGenerateCommitMessage,
+            onSelectAgent = viewModel::selectAgent,
+            onSetAntigravityModel = viewModel::setAntigravityModel,
+            onSetAntigravityEffort = viewModel::setAntigravityEffort,
+            onDiscoverModels = viewModel::discoverModels,
+            onSaveCustomProvider = viewModel::saveAndActivateCustomProvider,
+            onActivateCustomProvider = viewModel::activateCustomProvider,
+            onDeleteCustomProvider = viewModel::deleteCustomProvider,
+            getCustomProviderApiKey = viewModel::getCustomProviderApiKey,
+            onSetFullAccessTerminal = viewModel::setFullAccessTerminalEnabled,
+            onSetInteractivePtyMode = viewModel::setInteractivePtyMode,
+            onEnsureProjectPtyStarted = viewModel::ensureProjectPtyStarted,
+            onSendProjectPtyCommand = viewModel::sendProjectPtyCommand,
+            onSendProjectPtyRaw = viewModel::sendProjectPtyRaw,
+            onInterruptProjectPty = viewModel::interruptProjectPty,
+            onClearProjectPty = viewModel::clearProjectPty,
+            onRestartProjectPty = viewModel::restartProjectPty,
+            onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
+            onRemoveCustomCli = viewModel::removeCustomCliPackage,
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -617,7 +640,7 @@ private fun InitialLanguageSetupScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Mobile Harness", fontWeight = FontWeight.Bold)
+                        Text("CS Personal Engine", fontWeight = FontWeight.Bold)
                     }
                 },
                 actions = {
@@ -909,7 +932,7 @@ private fun BackgroundTaskSetupScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Mobile Harness", fontWeight = FontWeight.Bold)
+                        Text("CS Personal Engine", fontWeight = FontWeight.Bold)
                     }
                 },
                 actions = {
@@ -1185,7 +1208,7 @@ private fun RuntimeSetupPromptScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Mobile Harness", fontWeight = FontWeight.Bold)
+                        Text("CS Personal Engine", fontWeight = FontWeight.Bold)
                     }
                 },
                 navigationIcon = {
@@ -2385,7 +2408,7 @@ private fun StartupErrorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Mobile Harness", fontWeight = FontWeight.Bold)
+                        Text("CS Personal Engine", fontWeight = FontWeight.Bold)
                     }
                 },
                 actions = {
@@ -2470,6 +2493,8 @@ private fun RootScreenHost(
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
+    var showHomeCustomProvider by rememberSaveable { mutableStateOf(false) }
+    var showHomeCliHub by rememberSaveable { mutableStateOf(false) }
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
@@ -2529,6 +2554,9 @@ private fun RootScreenHost(
                     onPing = viewModel::pingApi,
                     onToggleTheme = viewModel::toggleTheme,
                     onInstallUpdate = viewModel::installAppUpdate,
+                    onOpenAgentHub = { screen = RootScreen.AGENT },
+                    onOpenCustomProvider = { showHomeCustomProvider = true },
+                    onOpenCliHub = { showHomeCliHub = true },
                 )
                 RootScreen.AGENT -> AgentScreen(
                     state = state,
@@ -2553,6 +2581,21 @@ private fun RootScreenHost(
                     onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
                     onSetAntigravityModel = viewModel::setAntigravityModel,
                     onSetAntigravityEffort = viewModel::setAntigravityEffort,
+                    onSaveCustomProvider = viewModel::saveAndActivateCustomProvider,
+                    onActivateCustomProvider = viewModel::activateCustomProvider,
+                    onDeleteCustomProvider = viewModel::deleteCustomProvider,
+                    getCustomProviderApiKey = viewModel::getCustomProviderApiKey,
+                    onRunCliInTerminal = { cliCmd ->
+                        showQuickTerminal = true
+                        if (state.interactivePtyMode) {
+                            viewModel.sendQuickPtyCommand(cliCmd)
+                        } else {
+                            viewModel.runTerminalCommand(cliCmd)
+                        }
+                    },
+                    onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
+                    onRemoveCustomCli = viewModel::removeCustomCliPackage,
+                    onSetFullAccessTerminal = viewModel::setFullAccessTerminalEnabled,
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
@@ -2596,7 +2639,34 @@ private fun RootScreenHost(
             }
         }
     }
+    if (showHomeCustomProvider) {
+        CustomProviderStudioSheet(
+            editingProvider = null,
+            initialApiKey = "",
+            savedProviders = state.savedCustomProviders,
+            activeCustomProviderId = state.activeCustomProviderId,
+            onDiscoverModels = viewModel::discoverModels,
+            onSaveAndActivate = viewModel::saveAndActivateCustomProvider,
+            onActivateExisting = viewModel::activateCustomProvider,
+            onDeleteExisting = viewModel::deleteCustomProvider,
+            onDismiss = { showHomeCustomProvider = false },
+        )
+    }
+    if (showHomeCliHub) {
+        CliMarketplaceSheet(
+            savedCustomClis = state.savedCustomClis,
+            onRunCommandInTerminal = { cmd ->
+                showQuickTerminal = true
+                if (state.interactivePtyMode) viewModel.sendQuickPtyCommand(cmd)
+                else viewModel.runTerminalCommand(cmd)
+            },
+            onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
+            onRemoveCustomCli = viewModel::removeCustomCliPackage,
+            onDismiss = { showHomeCliHub = false },
+        )
+    }
     if (showQuickTerminal) {
+        var showQuickCliHub by rememberSaveable { mutableStateOf(false) }
         QuickTerminalSheet(
             onDismiss = { showQuickTerminal = false },
         ) {
@@ -2614,6 +2684,29 @@ private fun RootScreenHost(
                 showThemeAction = false,
                 showQuickCommands = true,
                 compactHeader = true,
+                interactivePtyMode = state.interactivePtyMode,
+                onTogglePtyMode = viewModel::setInteractivePtyMode,
+                ptyBuffer = state.ptyTerminalBuffer,
+                ptyAlive = state.ptyTerminalAlive,
+                onEnsurePtyStarted = viewModel::ensureQuickPtyStarted,
+                onSendPtyCommand = viewModel::sendQuickPtyCommand,
+                onSendPtyRaw = viewModel::sendQuickPtyRaw,
+                onInterruptPty = viewModel::interruptQuickPty,
+                onClearPty = viewModel::clearQuickPty,
+                onRestartPty = viewModel::restartQuickPty,
+                onOpenCliHub = { showQuickCliHub = true },
+            )
+        }
+        if (showQuickCliHub) {
+            CliMarketplaceSheet(
+                savedCustomClis = state.savedCustomClis,
+                onRunCommandInTerminal = { cmd ->
+                    if (state.interactivePtyMode) viewModel.sendQuickPtyCommand(cmd)
+                    else viewModel.runTerminalCommand(cmd)
+                },
+                onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
+                onRemoveCustomCli = viewModel::removeCustomCliPackage,
+                onDismiss = { showQuickCliHub = false },
             )
         }
     }
@@ -3570,6 +3663,9 @@ private fun ProjectsScreen(
     onPing: () -> Unit,
     onToggleTheme: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onOpenAgentHub: () -> Unit = {},
+    onOpenCustomProvider: () -> Unit = {},
+    onOpenCliHub: () -> Unit = {},
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
@@ -3595,7 +3691,33 @@ private fun ProjectsScreen(
         topBar = {
             TopAppBar(
                 modifier = Modifier.padding(top = 8.dp),
-                title = { Row(verticalAlignment = Alignment.CenterVertically) { BrandMark(compact = true); Spacer(Modifier.width(9.dp)); Text("Mobile Harness", fontWeight = FontWeight.Bold) } },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (state.agentKind == AgentKind.ANTIGRAVITY) {
+                            AntigravitySparkMark(size = 24.dp)
+                        } else {
+                            BrandMark(compact = true)
+                        }
+                        Spacer(Modifier.width(9.dp))
+                        Column {
+                            Text("CS Personal Engine", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                            Text(
+                                if (state.agentKind == AgentKind.ANTIGRAVITY) "Antigravity Cosmic IDE · Full Linux Root"
+                                else "Obsidian Carbon IDE · Full Linux Root",
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onToggleTheme) {
+                        Icon(
+                            if (state.themeMode == AppThemeMode.DARK || state.themeMode == AppThemeMode.AMOLED) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = stringResource(R.string.theme_toggle),
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
         },
@@ -3607,6 +3729,70 @@ private fun ProjectsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
+                val isAgy = state.agentKind == AgentKind.ANTIGRAVITY
+                val activeCustom = state.savedCustomProviders.firstOrNull {
+                    state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId
+                }
+                val engineLabel = when {
+                    isAgy -> "Antigravity · ${formatAntigravityModelName(state.antigravityModel.ifBlank { "gemini-3.8-flash-high" })}"
+                    activeCustom != null -> "${activeCustom.name} · ${activeCustom.model}"
+                    else -> "${state.agentKind.localizedTitle()} · ${state.provider.model.ifBlank { state.provider.kind.localizedTitle() }}"
+                }
+                // v3.0 Command Strip: Engine Status + "+ Custom Provider" + "CLI Hub"
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        modifier = Modifier.clickable(onClick = onOpenAgentHub),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            if (isAgy) AntigravitySparkMark(size = 14.dp) else AnimatedEngineOrb(isRunning = false, size = 14.dp)
+                            Text(engineLabel, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier.clickable(onClick = onOpenCustomProvider),
+                        shape = RoundedCornerShape(12.dp),
+                        color = EngineCyan.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, EngineCyan.copy(alpha = 0.42f)),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(Icons.Default.Add, null, tint = EngineCyan, modifier = Modifier.size(14.dp))
+                            Text("Custom Provider", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = EngineCyan)
+                        }
+                    }
+                    Surface(
+                        modifier = Modifier.clickable(onClick = onOpenCliHub),
+                        shape = RoundedCornerShape(12.dp),
+                        color = EngineEmerald.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, EngineEmerald.copy(alpha = 0.42f)),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Icon(Icons.Default.Terminal, null, tint = EngineEmerald, modifier = Modifier.size(14.dp))
+                            Text("CLI Hub", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = EngineEmerald)
+                        }
+                    }
+                }
                 Text(stringResource(R.string.projects_hero_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text(stringResource(R.string.projects_hero_desc), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
@@ -3761,7 +3947,7 @@ private fun ProjectsScreen(
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Mobile Harness ${update.versionName}", fontWeight = FontWeight.Bold)
+                                Text("CS Personal Engine ${update.versionName}", fontWeight = FontWeight.Bold)
                                 Text(stringResource(R.string.ws_update_ready), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Text(stringResource(R.string.ws_update), color = PocketOrange, fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -4440,8 +4626,30 @@ private fun WorkspaceScreen(
     onGitSetRemoteUrl: (String) -> Unit = {},
     onGitCreateRepoAndPush: (String, String, Boolean, String) -> Unit = { _, _, _, _ -> },
     onGitAutoCommitMsg: () -> String = { "" },
+    onSelectAgent: (AgentKind) -> Unit = {},
+    onSetAntigravityModel: (String) -> Unit = {},
+    onSetAntigravityEffort: (String) -> Unit = {},
+    onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult = { _, _ -> ModelDiscoveryResult.Failure("Unavailable") },
+    onSaveCustomProvider: (SavedCustomProvider, String) -> Unit = { _, _ -> },
+    onActivateCustomProvider: (String) -> Unit = {},
+    onDeleteCustomProvider: (String) -> Unit = {},
+    getCustomProviderApiKey: (String) -> String = { "" },
+    onSetFullAccessTerminal: (Boolean) -> Unit = {},
+    onSetInteractivePtyMode: (Boolean) -> Unit = {},
+    onEnsureProjectPtyStarted: () -> Unit = {},
+    onSendProjectPtyCommand: (String) -> Unit = {},
+    onSendProjectPtyRaw: (String) -> Unit = {},
+    onInterruptProjectPty: () -> Unit = {},
+    onClearProjectPty: () -> Unit = {},
+    onRestartProjectPty: () -> Unit = {},
+    onAddCustomCli: (String, String, String) -> Unit = { _, _, _ -> },
+    onRemoveCustomCli: (String) -> Unit = {},
 ) {
     var showGitStudio by rememberSaveable { mutableStateOf(false) }
+    var showQuickEngineSheet by rememberSaveable { mutableStateOf(false) }
+    var showCustomProviderStudio by rememberSaveable { mutableStateOf(false) }
+    var editingCustomProviderId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showWorkspaceCliHub by rememberSaveable { mutableStateOf(false) }
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
@@ -4670,108 +4878,229 @@ private fun WorkspaceScreen(
             dismissButton = { TextButton(onClick = onTerminalCancel) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
+    val isAntigravityActive = state.agentKind == AgentKind.ANTIGRAVITY
+    val activeSavedCustom = state.savedCustomProviders.firstOrNull {
+        state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId
+    }
+    val headerAgentLabel = when {
+        isAntigravityActive -> "Antigravity"
+        activeSavedCustom != null -> activeSavedCustom.name
+        else -> state.provider.kind.localizedTitle()
+    }
+    val headerModelLabel = when {
+        isAntigravityActive -> formatAntigravityModelName(state.antigravityModel.ifBlank { "gemini-3.8-flash-high" })
+        activeSavedCustom != null -> activeSavedCustom.model
+        else -> state.provider.model.ifBlank { state.agentKind.localizedTitle() }
+    }
+
+    if (showQuickEngineSheet) {
+        WorkspaceQuickEngineSheet(
+            state = state,
+            onDismiss = { showQuickEngineSheet = false },
+            onSelectAgent = onSelectAgent,
+            onSetAntigravityModel = onSetAntigravityModel,
+            onSetAntigravityEffort = onSetAntigravityEffort,
+            onActivateCustomProvider = { id ->
+                onActivateCustomProvider(id)
+                showQuickEngineSheet = false
+            },
+            onDeleteCustomProvider = onDeleteCustomProvider,
+            onOpenAddCustomProvider = { existing ->
+                showQuickEngineSheet = false
+                editingCustomProviderId = existing?.id
+                showCustomProviderStudio = true
+            },
+            onToggleFullAccess = onSetFullAccessTerminal,
+            onOpenCliStore = { showWorkspaceCliHub = true },
+        )
+    }
+
+    if (showCustomProviderStudio) {
+        val editing = state.savedCustomProviders.firstOrNull { it.id == editingCustomProviderId }
+        CustomProviderStudioSheet(
+            editingProvider = editing,
+            initialApiKey = editing?.let { getCustomProviderApiKey(it.id) }.orEmpty(),
+            savedProviders = state.savedCustomProviders,
+            activeCustomProviderId = state.activeCustomProviderId,
+            onDiscoverModels = onDiscoverModels,
+            onSaveAndActivate = onSaveCustomProvider,
+            onActivateExisting = onActivateCustomProvider,
+            onDeleteExisting = onDeleteCustomProvider,
+            onDismiss = { showCustomProviderStudio = false },
+        )
+    }
+
+    if (showWorkspaceCliHub) {
+        CliMarketplaceSheet(
+            savedCustomClis = state.savedCustomClis,
+            onRunCommandInTerminal = { cliCmd ->
+                selectedTab = WorkspaceTab.TERMINAL
+                onTerminalOpened()
+                if (state.interactivePtyMode) {
+                    onSendProjectPtyCommand(cliCmd)
+                } else {
+                    onTerminalRun(cliCmd)
+                }
+            },
+            onAddCustomCli = onAddCustomCli,
+            onRemoveCustomCli = onRemoveCustomCli,
+            onDismiss = { showWorkspaceCliHub = false },
+        )
+    }
+
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column(Modifier.fillMaxWidth()) {
-                        Text(
-                            state.activeProject?.name.orEmpty(),
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.combinedClickable(
-                                onClick = {},
-                                onLongClick = {
-                                    Toast.makeText(context, state.activeProject?.name.orEmpty(), Toast.LENGTH_LONG).show()
-                                },
-                            ),
-                        )
-                        // Agent first so it always stays visible; a long chat title is cut with "…".
-                        Text(
-                            "${if (state.agentKind == AgentKind.ANTIGRAVITY) state.agentKind.localizedTitle() else state.provider.kind.localizedTitle()} · ${activeChat?.localizedTitle() ?: stringResource(R.string.tab_chat)}",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
-                actions = {
-                    Surface(
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                modifier = Modifier.fillMaxWidth().statusBarsPadding(),
+            ) {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    // Row 1: Unified IDE Project & Engine/Model Header
+                    Row(
                         modifier = Modifier
-                            .padding(end = 4.dp)
-                            .enginePressScale {
-                                onRefreshGitStatus()
-                                showGitStudio = true
-                            },
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                        border = BorderStroke(
-                            1.dp,
-                            if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
-                        ),
+                            .fillMaxWidth()
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        IconButton(onClick = onBack, modifier = Modifier.size(38.dp)) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects), modifier = Modifier.size(20.dp))
+                        }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { showQuickEngineSheet = true }
+                                .padding(horizontal = 4.dp),
                         ) {
-                            Icon(
-                                Icons.Default.CloudUpload,
-                                contentDescription = "Git & GitHub Push",
-                                modifier = Modifier.size(15.dp),
-                                tint = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                             Text(
-                                text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                state.activeProject?.name.orEmpty(),
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                if (isAntigravityActive) {
+                                    AntigravitySparkMark(isRunning = state.isRunning, size = 12.dp)
+                                } else {
+                                    AnimatedEngineOrb(isRunning = state.isRunning, size = 11.dp)
+                                }
+                                Text(
+                                    text = "$headerAgentLabel · $headerModelLabel",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isAntigravityActive) AntigravityBlue else MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
-                    }
-                    if (isAndroidProject) {
-                        IconButton(
-                            onClick = { showAndroidBuild = true },
-                            enabled = !state.isRunning && !state.projectTerminalRunning,
+
+                        Surface(
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .enginePressScale {
+                                    onRefreshGitStatus()
+                                    showGitStudio = true
+                                },
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            border = BorderStroke(
+                                1.dp,
+                                if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
+                            ),
                         ) {
-                            if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                            else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android))
+                            Row(
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.CloudUpload,
+                                    contentDescription = "Git & GitHub Push",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        if (isAndroidProject) {
+                            IconButton(
+                                onClick = { showAndroidBuild = true },
+                                enabled = !state.isRunning && !state.projectTerminalRunning,
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android), modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        IconButton(onClick = { showChats = true }, modifier = Modifier.size(36.dp)) {
+                            Icon(Icons.Default.History, stringResource(R.string.ws_project_chats), modifier = Modifier.size(19.dp))
                         }
                     }
-                    IconButton(onClick = { showChats = true }) { Icon(Icons.Default.History, stringResource(R.string.ws_project_chats)) }
-                    if (state.isRunning) {
-                        AnimatedEngineOrb(isRunning = true, size = 22.dp, modifier = Modifier.padding(horizontal = 8.dp))
+
+                    // Row 2: Sleek Segmented Workspace Mode Strip (replaces bulky bottom NavigationBar!)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
+                            val selected = selectedTab == tab
+                            val activeColor = if (isAntigravityActive) AntigravityBlue else MaterialTheme.colorScheme.primary
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable {
+                                        selectedTab = tab
+                                        if (tab == WorkspaceTab.FILES) onRefreshFiles()
+                                        if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
+                                    },
+                                shape = RoundedCornerShape(11.dp),
+                                color = if (selected) activeColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) activeColor.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                                ),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(vertical = 7.dp, horizontal = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    Icon(
+                                        tab.icon,
+                                        contentDescription = stringResource(tab.labelRes),
+                                        modifier = Modifier.size(14.dp),
+                                        tint = if (selected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.width(5.dp))
+                                    Text(
+                                        text = stringResource(tab.labelRes),
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                        color = if (selected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
-        },
-        bottomBar = {
-            if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
-                    NavigationBarItem(
-                        selected = selectedTab == tab,
-                        onClick = {
-                            selectedTab = tab
-                            if (tab == WorkspaceTab.FILES) onRefreshFiles()
-                            if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
-                        },
-                        icon = { Icon(tab.icon, stringResource(tab.labelRes)) },
-                        label = { Text(stringResource(tab.labelRes), fontSize = 10.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                        ),
-                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                 }
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding).navigationBarsPadding()) {
             when (selectedTab) {
                 WorkspaceTab.CHAT -> ChatTab(
                     state.messages,
@@ -4804,7 +5133,12 @@ private fun WorkspaceScreen(
                     onOpenAttachment = onOpenAttachment,
                     onRunInTerminal = { command ->
                         selectedTab = WorkspaceTab.TERMINAL
-                        onExecuteFromChat(command)
+                        onTerminalOpened()
+                        if (state.interactivePtyMode) {
+                            onSendProjectPtyCommand(command)
+                        } else {
+                            onExecuteFromChat(command)
+                        }
                     },
                     queuedFollowUps = state.queuedFollowUps,
                     onSteerFollowUp = onSteerFollowUp,
@@ -4826,6 +5160,19 @@ private fun WorkspaceScreen(
                         selectedTab = WorkspaceTab.TERMINAL
                         onTerminalOpened()
                     },
+                    projectName = state.activeProject?.name ?: "Workspace",
+                    activeAgentLabel = headerAgentLabel,
+                    activeModelLabel = headerModelLabel,
+                    antigravityEffort = state.antigravityEffort,
+                    fullAccessEnabled = state.fullAccessTerminalEnabled,
+                    onOpenEngineSwitcher = { showQuickEngineSheet = true },
+                    onOpenCustomProviderStudio = {
+                        editingCustomProviderId = null
+                        showCustomProviderStudio = true
+                    },
+                    onOpenCliStore = { showWorkspaceCliHub = true },
+                    onSelectAntigravityEffort = onSetAntigravityEffort,
+                    onToggleFullAccess = onSetFullAccessTerminal,
                 )
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
@@ -4877,7 +5224,7 @@ private fun WorkspaceScreen(
                     onToggleTheme = {},
                     themeMode = state.themeMode,
                     title = stringResource(R.string.workspace_project_terminal),
-                    subtitle = "${state.projectTerminalCwd} · Ubuntu PRoot",
+                    subtitle = "${state.projectTerminalCwd} · Full Root Ubuntu PRoot",
                     liveOutput = state.projectTerminalLiveOutput,
                     currentCommand = state.projectTerminalCommand,
                     commandDraft = state.projectTerminalDraft,
@@ -4889,8 +5236,19 @@ private fun WorkspaceScreen(
                         onFixTerminalFailure(cmd, out, code)
                     },
                     showThemeAction = false,
-                    showQuickCommands = false,
+                    showQuickCommands = true,
                     compactHeader = true,
+                    interactivePtyMode = state.interactivePtyMode,
+                    onTogglePtyMode = onSetInteractivePtyMode,
+                    ptyBuffer = state.projectPtyTerminalBuffer,
+                    ptyAlive = state.projectPtyTerminalAlive,
+                    onEnsurePtyStarted = onEnsureProjectPtyStarted,
+                    onSendPtyCommand = onSendProjectPtyCommand,
+                    onSendPtyRaw = onSendProjectPtyRaw,
+                    onInterruptPty = onInterruptProjectPty,
+                    onClearPty = onClearProjectPty,
+                    onRestartPty = onRestartProjectPty,
+                    onOpenCliHub = { showWorkspaceCliHub = true },
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     state.changes,
@@ -6339,49 +6697,109 @@ private fun ChatTab(
     detectedServerPorts: List<Int> = emptyList(),
     onOpenServerPort: (Int) -> Unit = {},
     onOpenTerminalTab: () -> Unit = {},
+    projectName: String = "Workspace",
+    activeAgentLabel: String = "CS Engine",
+    activeModelLabel: String = "",
+    antigravityEffort: String = "high",
+    fullAccessEnabled: Boolean = true,
+    onOpenEngineSwitcher: () -> Unit = {},
+    onOpenCustomProviderStudio: () -> Unit = {},
+    onOpenCliStore: () -> Unit = {},
+    onSelectAntigravityEffort: (String) -> Unit = {},
+    onToggleFullAccess: (Boolean) -> Unit = {},
 ) {
     val view = LocalView.current
-    // Keep the screen on while the selected agent is working in this chat. Released automatically
-    // when the task finishes or the user leaves the chat tab.
+    val isAntigravity = agentKind == AgentKind.ANTIGRAVITY
+    val displayAgentHeader = if (activeModelLabel.isNotBlank()) "$activeAgentLabel · $activeModelLabel" else activeAgentLabel
     DisposableEffect(isRunning) {
         view.keepScreenOn = isRunning
         onDispose { view.keepScreenOn = false }
     }
     var prompt by rememberSaveable { mutableStateOf("") }
+    var showPowerPopover by remember { mutableStateOf(false) }
     val chatScope = rememberCoroutineScope()
-    // True while the newest item (message, live panel, or approval card) is on screen.
     val readerAtBottom by remember {
         derivedStateOf {
             !listState.canScrollForward
         }
     }
+    val hasUserConversation = remember(messages) {
+        messages.any { it.fromUser } || messages.size > 1
+    }
+    val timelineMessages = remember(messages, hasUserConversation) {
+        if (!hasUserConversation) {
+            messages.filterNot { !it.fromUser && it.text == "Hi! Tell me what you want to build or change." }
+        } else {
+            messages
+        }
+    }
+    val liveElapsedSeconds = taskStartedAtMillis?.let { rememberLiveElapsedSeconds(it).toLong() } ?: 0L
+
     Column(Modifier.fillMaxSize().imePadding()) {
         Box(Modifier.weight(1f)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(messages, key = { it.id }) { message ->
-                    if (message.workItems.isNotEmpty()) {
-                        WorkBlockCard(message)
-                    } else {
-                        MessageBubble(message, onRunInTerminal, onOpenAttachment)
-                    }
-                }
-                if (liveProcess.isNotEmpty() || thinkingActive) {
-                    item(key = "live-claude-process") {
-                        LiveClaudeProcess(
-                            processItems = liveProcess,
-                            isRunning = isRunning,
-                            startedAtMillis = taskStartedAtMillis,
-                            finishedAtMillis = taskFinishedAtMillis,
-                            thinkingActive = thinkingActive,
+                if (!hasUserConversation && !isRunning && !readOnly) {
+                    item(key = "fullscreen-welcome-hero") {
+                        FullScreenChatWelcomeHero(
+                            isAntigravity = isAntigravity,
+                            projectName = projectName,
+                            activeAgentLabel = activeAgentLabel,
+                            activeModelLabel = activeModelLabel,
+                            antigravityEffort = antigravityEffort,
+                            fullAccessEnabled = fullAccessEnabled,
+                            onOpenEngineSwitcher = onOpenEngineSwitcher,
+                            onOpenCustomProviderStudio = onOpenCustomProviderStudio,
+                            onOpenCliStore = onOpenCliStore,
+                            onSelectEffort = onSelectAntigravityEffort,
+                            onQuickPrompt = { starter -> onSend(starter) },
                         )
                     }
                 }
-                approval?.let { request -> item { ApprovalCard(request, onApproval) } }
+
+                items(timelineMessages, key = { it.id }) { message ->
+                    if (message.workItems.isNotEmpty()) {
+                        InlineAgentStepsCard(
+                            items = message.workItems,
+                            isAntigravity = isAntigravity,
+                            isRunning = false,
+                            thinkingActive = false,
+                            elapsedSeconds = (message.workedMillis / 1_000L).coerceAtLeast(1L),
+                            onRunInTerminal = onRunInTerminal,
+                        )
+                    } else {
+                        val isStreamingLast = isRunning &&
+                            !message.fromUser &&
+                            timelineMessages.lastOrNull()?.id == message.id
+                        FullScreenChatMessageItem(
+                            message = message,
+                            isAntigravity = isAntigravity,
+                            agentDisplayName = displayAgentHeader,
+                            isStreamingNow = isStreamingLast,
+                            onRunInTerminal = onRunInTerminal,
+                            onOpenAttachment = onOpenAttachment,
+                        )
+                    }
+                }
+
+                if (liveProcess.isNotEmpty() || thinkingActive) {
+                    item(key = "live-agent-steps") {
+                        InlineAgentStepsCard(
+                            items = liveProcess,
+                            isAntigravity = isAntigravity,
+                            isRunning = isRunning,
+                            thinkingActive = thinkingActive,
+                            elapsedSeconds = liveElapsedSeconds,
+                            onRunInTerminal = onRunInTerminal,
+                        )
+                    }
+                }
+
+                approval?.let { request -> item(key = "approval-card") { ApprovalCard(request, onApproval) } }
             }
             if (!readerAtBottom) {
                 Surface(
@@ -6396,8 +6814,9 @@ private fun ChatTab(
                             }
                         },
                     shape = CircleShape,
-                    shadowElevation = 4.dp,
+                    shadowElevation = 6.dp,
                     color = MaterialTheme.colorScheme.surfaceVariant,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
                 ) {
                     Row(
                         Modifier.padding(start = 13.dp, end = 15.dp, top = 7.dp, bottom = 7.dp),
@@ -6455,13 +6874,13 @@ private fun ChatTab(
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
                 if (queuedFollowUps.isNotEmpty()) {
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 180.dp)
+                            .heightIn(max = 160.dp)
                             .verticalScroll(rememberScrollState())
                             .padding(bottom = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -6498,7 +6917,7 @@ private fun ChatTab(
                 DetectedDevServerBanner(
                     ports = detectedServerPorts,
                     onOpenPort = onOpenServerPort,
-                    modifier = Modifier.padding(bottom = 8.dp),
+                    modifier = Modifier.padding(bottom = 6.dp),
                 )
 
                 SlashCommandPalette(
@@ -6507,30 +6926,17 @@ private fun ChatTab(
                         prompt = ""
                         onSend(slashCmd.expandedPrompt)
                     },
-                    modifier = Modifier.padding(bottom = 8.dp),
+                    modifier = Modifier.padding(bottom = 6.dp),
                 )
 
-                LiveEngineTelemetryHud(
-                    isRunning = isRunning,
-                    statusMessage = if (thinkingActive) "Reasoning & planning…" else "Streaming live output…",
-                    activeToolSummary = activeToolSummary,
-                    streamingPreview = streamingPreview,
-                    expanded = liveStreamExpanded,
-                    onToggleExpanded = onToggleLiveStreamExpanded,
-                    autoContextEnabled = autoContextEnabled,
-                    onToggleAutoContext = onToggleAutoContext,
-                    autoRunCommands = autoRunCommands,
-                    onToggleAutoRunCommands = onToggleAutoRunCommands,
-                    onOpenTerminal = onOpenTerminalTab,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-
+                // Sleek Full-Screen Floating Capsule Composer (NO cramped bottom preview box!)
+                val composerAccent = if (isAntigravity) AntigravityBlue else MaterialTheme.colorScheme.primary
                 Surface(
-                    shape = RoundedCornerShape(26.dp),
+                    shape = RoundedCornerShape(24.dp),
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
                         width = 1.dp,
-                        color = if (canSend) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
+                        color = if (canSend || isRunning) composerAccent.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -6545,13 +6951,13 @@ private fun ChatTab(
                             IconButton(
                                 onClick = { attachMenuOpen = true },
                                 enabled = pendingAttachments.size < 5,
-                                modifier = Modifier.size(40.dp),
+                                modifier = Modifier.size(38.dp),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.AttachFile,
                                     contentDescription = stringResource(R.string.chat_attach_files),
-                                    modifier = Modifier.size(20.dp),
-                                    tint = if (pendingAttachments.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(19.dp),
+                                    tint = if (pendingAttachments.isNotEmpty()) composerAccent else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             DropdownMenu(expanded = attachMenuOpen, onDismissRequest = { attachMenuOpen = false }) {
@@ -6565,6 +6971,52 @@ private fun ChatTab(
                                     leadingIcon = { Icon(Icons.Default.AttachFile, null) },
                                     onClick = { attachMenuOpen = false; onAttach() },
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("Switch Engine / + Custom Provider") },
+                                    leadingIcon = { Icon(Icons.Default.AutoAwesome, null) },
+                                    onClick = { attachMenuOpen = false; onOpenEngineSwitcher() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Install / Launch Any CLI") },
+                                    leadingIcon = { Icon(Icons.Default.Terminal, null) },
+                                    onClick = { attachMenuOpen = false; onOpenCliStore() },
+                                )
+                            }
+                        }
+
+                        Box {
+                            IconButton(
+                                onClick = { showPowerPopover = true },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "Engine Power Controls",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = if (fullAccessEnabled) EngineEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(expanded = showPowerPopover, onDismissRequest = { showPowerPopover = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(if (fullAccessEnabled) "✓ Full Root Terminal & AI" else "Full Root Terminal & AI") },
+                                    onClick = { onToggleFullAccess(!fullAccessEnabled) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (autoContextEnabled) "✓ Auto IDE Context ON" else "Auto IDE Context OFF") },
+                                    onClick = { onToggleAutoContext(!autoContextEnabled) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (autoRunCommands) "✓ Auto-Run Bash ON" else "Auto-Run Bash OFF") },
+                                    onClick = { onToggleAutoRunCommands(!autoRunCommands) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("+ Add Custom Provider") },
+                                    onClick = { showPowerPopover = false; onOpenCustomProviderStudio() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Open Live PTY Terminal") },
+                                    onClick = { showPowerPopover = false; onOpenTerminalTab() },
+                                )
                             }
                         }
 
@@ -6574,21 +7026,21 @@ private fun ChatTab(
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(horizontal = 4.dp, vertical = 10.dp)
-                                .heightIn(min = 20.dp, max = 130.dp),
+                                .heightIn(min = 20.dp, max = 140.dp),
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 15.sp,
                                 lineHeight = 20.sp,
                             ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            cursorBrush = SolidColor(composerAccent),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                             decorationBox = { innerTextField ->
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (prompt.isEmpty()) {
                                         Text(
-                                            text = stringResource(R.string.chat_message_agent, stringResource(agentKind.titleRes())),
+                                            text = if (isAntigravity) "Ask Antigravity anything or type /…" else "Ask $activeAgentLabel or type /…",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 15.sp,
+                                            fontSize = 14.5.sp,
                                         )
                                     }
                                     innerTextField()
@@ -6623,7 +7075,7 @@ private fun ChatTab(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .background(
-                                        color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                        color = if (canSend) composerAccent else MaterialTheme.colorScheme.surfaceVariant,
                                         shape = CircleShape,
                                     )
                                     .clickable(

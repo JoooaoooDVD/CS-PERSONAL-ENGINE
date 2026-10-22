@@ -1,11 +1,13 @@
 package com.jarves.mh.runtime
 
 import com.jarves.mh.model.AgentKind
+import com.jarves.mh.model.BUILTIN_CLI_PACKAGES
 import com.jarves.mh.model.ENGINE_SLASH_COMMANDS
 import com.jarves.mh.model.OPENAI_COMPATIBLE_PRESETS
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.ProviderProtocol
+import com.jarves.mh.model.SavedCustomProvider
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.model.providersForAgent
 import java.io.BufferedReader
@@ -211,5 +213,60 @@ class CsPersonalEngineUpgradeTest {
         assertTrue("/fix" in slashes)
         assertTrue("/run" in slashes)
         assertTrue("/ci" in slashes)
+        assertTrue("/cli" in slashes)
+    }
+
+    @Test
+    fun savedCustomProviderMapsToCorrectOpenAiAndAnthropicProfiles() {
+        val groqCustom = SavedCustomProvider(
+            id = "groq-1",
+            name = "My Groq Fast",
+            baseUrl = "https://api.groq.com/openai/v1",
+            model = "llama-3.3-70b-versatile",
+            wireProtocol = "openai-completions",
+            customHeaders = "X-Team: dev",
+        )
+        val groqProfile = groqCustom.toProviderProfile()
+        assertEquals(ProviderKind.OPENAI_CUSTOM, groqProfile.kind)
+        assertEquals(ProviderProtocol.OPENAI_CHAT, groqProfile.effectiveClaudeProtocol)
+        assertEquals("CUSTOM_PROVIDER_groq-1", groqCustom.vaultKeyId)
+        assertEquals(mapOf("X-Team" to "dev"), groqProfile.parsedCustomHeaders)
+
+        val anthropicCustom = SavedCustomProvider(
+            id = "anth-1",
+            name = "Custom Anthropic Proxy",
+            baseUrl = "https://proxy.example.com/anthropic",
+            model = "claude-sonnet-4-6",
+            wireProtocol = "anthropic-messages",
+        )
+        val anthProfile = anthropicCustom.toProviderProfile()
+        assertEquals(ProviderKind.CUSTOM, anthProfile.kind)
+        assertEquals(ProviderProtocol.ANTHROPIC_GATEWAY, anthProfile.effectiveClaudeProtocol)
+    }
+
+    @Test
+    fun interactivePtySessionStripsAnsiAndNormalizesRootAptCommands() {
+        val rawPty = "\u001B[32mroot@cs-engine:~#\u001B[0m npm -v\r\nDownloading 10%\rDownloading 100%\r\n10.8.2\r\n"
+        val clean = InteractivePtySession.stripPtyAnsi(rawPty)
+        assertTrue("root@cs-engine:~# npm -v" in clean)
+        assertTrue("Downloading 100%" in clean)
+        assertFalse("Downloading 10%" in clean)
+        assertTrue("10.8.2" in clean)
+
+        val normalizedApt = InteractivePtySession.normalizeAptForRootPty("sudo apt install ripgrep jq")
+        assertTrue("DEBIAN_FRONTEND=noninteractive apt-get -y" in normalizedApt)
+        assertTrue("ripgrep jq" in normalizedApt)
+    }
+
+    @Test
+    fun builtinCliMarketplaceCoversMajorCodingAgentsAndLinuxToolchains() {
+        val ids = BUILTIN_CLI_PACKAGES.map { it.id }.toSet()
+        assertTrue("openai-codex" in ids)
+        assertTrue("google-gemini-cli" in ids)
+        assertTrue("opencode-cli" in ids)
+        assertTrue("aider-cli" in ids)
+        assertTrue("qwen-code-cli" in ids)
+        assertTrue("github-cli" in ids)
+        assertTrue("linux-power-pack" in ids)
     }
 }

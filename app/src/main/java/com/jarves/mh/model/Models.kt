@@ -519,4 +519,136 @@ val ENGINE_SLASH_COMMANDS: List<EngineSlashCommand> = listOf(
         description = "Create a production-ready `.github/workflows` build & release pipeline",
         expandedPrompt = "Create or upgrade `.github/workflows/ci.yml` for this project with caching, automated tests, linting, and release artifact publishing tailored to this codebase.",
     ),
+    EngineSlashCommand(
+        command = "/cli",
+        title = "Install & Configure CLI Tools",
+        description = "Have the AI install, configure, and verify any Linux or coding CLI in the rootfs",
+        expandedPrompt = "Check the installed Linux packages and global CLI binaries (`apt-get`, `npm -g`, `pip`, `cargo`, `PATH`), install any missing requested CLI tools cleanly, and verify they execute properly in `/workspace`.",
+    ),
 )
+
+/**
+ * User-created named Custom Provider profile (OpenAI Chat, OpenAI Responses, Anthropic Gateway,
+ * Ollama, Groq, Together, OpenRouter, or any self-hosted LLM proxy).
+ */
+data class SavedCustomProvider(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val baseUrl: String,
+    val model: String,
+    val wireProtocol: String = "openai-completions", // openai-completions | openai-responses | anthropic-messages
+    val customHeaders: String = "",
+    val createdAtMillis: Long = System.currentTimeMillis(),
+) {
+    val vaultKeyId: String get() = "CUSTOM_PROVIDER_$id"
+
+    fun toProviderProfile(): ProviderProfile {
+        val kind = if (wireProtocol == "anthropic-messages") ProviderKind.CUSTOM else ProviderKind.OPENAI_CUSTOM
+        return ProviderProfile(
+            kind = kind,
+            baseUrl = baseUrl.trim(),
+            model = model.trim(),
+            dshApi = wireProtocol,
+            customHeaders = customHeaders.trim(),
+        )
+    }
+}
+
+/**
+ * Installable & runnable external CLI package or coding agent inside the full Ubuntu arm64 rootfs.
+ */
+data class CliToolPackage(
+    val id: String,
+    val name: String,
+    val category: String,
+    val description: String,
+    val installCommand: String,
+    val launchCommand: String,
+    val checkBinary: String,
+    val isCustom: Boolean = false,
+)
+
+val BUILTIN_CLI_PACKAGES: List<CliToolPackage> = listOf(
+    CliToolPackage(
+        id = "openai-codex",
+        name = "OpenAI Codex CLI",
+        category = "AI Agent CLI",
+        description = "Official OpenAI terminal coding agent (@openai/codex)",
+        installCommand = "npm install -g @openai/codex",
+        launchCommand = "codex",
+        checkBinary = "codex",
+    ),
+    CliToolPackage(
+        id = "google-gemini-cli",
+        name = "Google Gemini CLI",
+        category = "AI Agent CLI",
+        description = "Official Google Gemini terminal coding agent (@google/gemini-cli)",
+        installCommand = "npm install -g @google/gemini-cli",
+        launchCommand = "gemini",
+        checkBinary = "gemini",
+    ),
+    CliToolPackage(
+        id = "opencode-cli",
+        name = "OpenCode AI CLI",
+        category = "AI Agent CLI",
+        description = "Open-source multi-provider terminal coding agent (opencode-ai)",
+        installCommand = "npm install -g opencode-ai",
+        launchCommand = "opencode",
+        checkBinary = "opencode",
+    ),
+    CliToolPackage(
+        id = "qwen-code-cli",
+        name = "Qwen Code CLI",
+        category = "AI Agent CLI",
+        description = "Alibaba Qwen agentic coding CLI (@qwen-code/qwen-code)",
+        installCommand = "npm install -g @qwen-code/qwen-code",
+        launchCommand = "qwen",
+        checkBinary = "qwen",
+    ),
+    CliToolPackage(
+        id = "aider-cli",
+        name = "Aider Pair Programmer",
+        category = "AI Agent CLI",
+        description = "Git-native AI pair programmer in your terminal (aider-chat)",
+        installCommand = "apt-get update && apt-get install -y python3-pip && python3 -m pip install --break-system-packages -U aider-chat",
+        launchCommand = "aider",
+        checkBinary = "aider",
+    ),
+    CliToolPackage(
+        id = "github-cli",
+        name = "GitHub CLI (gh)",
+        category = "Git & Cloud",
+        description = "Manage PRs, Issues, Actions workflows & Releases directly from bash",
+        installCommand = "apt-get update && apt-get install -y gh",
+        launchCommand = "gh status || gh --version",
+        checkBinary = "gh",
+    ),
+    CliToolPackage(
+        id = "linux-power-pack",
+        name = "Linux Power Dev Pack",
+        category = "System Toolchain",
+        description = "ripgrep (rg), jq, tmux, neovim, htop, tree, zip/unzip, build-essential, python3-pip",
+        installCommand = "apt-get update && apt-get install -y ripgrep jq tmux neovim htop tree zip unzip curl wget build-essential python3-pip python3-venv",
+        launchCommand = "rg --version && jq --version && nvim --version | head -n 1",
+        checkBinary = "rg",
+    ),
+    CliToolPackage(
+        id = "uv-python",
+        name = "uv (Astral Python)",
+        category = "Runtimes",
+        description = "Ultra-fast Rust Python package, virtualenv & tool runner (uv / uvx)",
+        installCommand = "curl -LsSf https://astral.sh/uv/install.sh | sh",
+        launchCommand = "uv --version",
+        checkBinary = "uv",
+    ),
+    CliToolPackage(
+        id = "bun-runtime",
+        name = "Bun JS Runtime",
+        category = "Runtimes",
+        description = "All-in-one fast JavaScript/TypeScript runtime, bundler & package manager",
+        installCommand = "apt-get update && apt-get install -y unzip curl && curl -fsSL https://bun.sh/install | bash",
+        launchCommand = "bun --version",
+        checkBinary = "bun",
+    ),
+)
+
