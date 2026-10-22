@@ -197,14 +197,15 @@ class InteractivePtySession(
             val withoutOsc = afterClear.replace(Regex("\u001B\\][^\\u0007\\u001B]*(?:\u0007|\u001B\\\\)"), "")
             val withoutCsi = withoutOsc.replace(Regex("\u001B\\[[0-9;?]*[ -/]*[@-~]"), "")
             val withoutSingleEsc = withoutCsi.replace(Regex("\u001B[@-Z\\\\-_]"), "")
-            // Handle carriage-return progress bars (`\r` not followed by `\n`) cleanly per line
+            // Handle carriage-return progress bars (`\r` not followed by `\n`) cleanly per line.
+            // Note: use `.split('\n')` rather than `lineSequence()` because `lineSequence()` splits on `\r` too!
             return withoutSingleEsc
                 .replace("\r\n", "\n")
-                .lineSequence()
-                .map { line ->
+                .split('\n')
+                .joinToString("\n") { rawLine ->
+                    val line = rawLine.trimEnd('\r')
                     if ('\r' in line) line.substringAfterLast('\r') else line
                 }
-                .joinToString("\n")
                 .replace("\u0007", "")
         }
 
