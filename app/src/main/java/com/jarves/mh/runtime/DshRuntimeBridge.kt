@@ -764,14 +764,40 @@ internal object DshRouteMapper {
                 defaultModel = model,
                 custom = DshCustomRoute("openai-completions", profile.resolvedBaseUrl),
             )
+            ProviderKind.OPENAI_CUSTOM -> DshRoute(
+                name = "mh-openai-custom",
+                keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
+                defaultModel = model,
+                custom = DshCustomRoute(
+                    api = profile.dshApi.ifBlank { "openai-completions" },
+                    baseUrl = normalizeOpenAiBaseUrlForDsh(profile.resolvedBaseUrl),
+                ),
+            )
             ProviderKind.CUSTOM -> DshRoute(
                 name = "mh-custom",
                 keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
                 defaultModel = model,
-                custom = DshCustomRoute(profile.dshApi.ifBlank { "anthropic-messages" }, profile.resolvedBaseUrl),
+                custom = DshCustomRoute(
+                    api = profile.dshApi.ifBlank { "anthropic-messages" },
+                    baseUrl = if (profile.dshApi.startsWith("openai-")) {
+                        normalizeOpenAiBaseUrlForDsh(profile.resolvedBaseUrl)
+                    } else {
+                        profile.resolvedBaseUrl
+                    },
+                ),
             )
             ProviderKind.CLAUDE -> throw IllegalArgumentException("Claude subscription login is not supported by DeepSeek Harness")
         }
+    }
+
+    private fun normalizeOpenAiBaseUrlForDsh(rawUrl: String): String {
+        val base = rawUrl.trim().trimEnd('/')
+            .removeSuffix("/chat/completions")
+            .removeSuffix("/responses")
+            .trimEnd('/')
+        if (base.isBlank()) return base
+        val uriPath = runCatching { java.net.URI(base).path.orEmpty().trimEnd('/') }.getOrDefault("")
+        return if (uriPath.isEmpty()) "$base/v1" else base
     }
 }
 

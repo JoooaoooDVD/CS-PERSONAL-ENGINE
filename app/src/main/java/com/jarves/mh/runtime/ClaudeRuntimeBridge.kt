@@ -145,7 +145,7 @@ class ClaudeRuntimeBridge(
             val workspace = ensureWorkspace(projectId)
             createCheckpoint(projectId, workspace)
             val before = snapshot(workspace)
-            formatGateway = if (provider.kind.protocol in setOf(
+            formatGateway = if (provider.effectiveClaudeProtocol in setOf(
                     com.jarves.mh.model.ProviderProtocol.OPENAI_CHAT,
                     com.jarves.mh.model.ProviderProtocol.OPENAI_RESPONSES,
                 )) LocalFormatGateway(provider, secret).start() else null

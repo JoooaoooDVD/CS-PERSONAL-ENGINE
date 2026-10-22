@@ -109,6 +109,7 @@ fun TerminalScreen(
     onCommandDraftConsumed: () -> Unit = {},
     promptPath: String = "/workspace",
     onStop: (() -> Unit)? = null,
+    onFixWithAi: ((command: String, output: String, exitCode: Int) -> Unit)? = null,
     showThemeAction: Boolean = false,
     showQuickCommands: Boolean = true,
     compactHeader: Boolean = false,
@@ -297,16 +298,62 @@ fun TerminalScreen(
             }
 
             val isDark = when (themeMode) {
-                AppThemeMode.DARK -> true
+                AppThemeMode.DARK, AppThemeMode.AMOLED -> true
                 AppThemeMode.LIGHT -> false
                 AppThemeMode.SYSTEM -> isSystemInDarkTheme()
             }
-            // Neutral console background in light mode; the theme surface is tinted orange.
-            val terminalBg = if (isDark) Color(0xFF090D14) else Color(0xFFF6F8FA)
+            val terminalBg = when (themeMode) {
+                AppThemeMode.AMOLED -> Color(0xFF000000)
+                else -> if (isDark) Color(0xFF07090D) else Color(0xFFF6F8FA)
+            }
             val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
             val commandTextColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
             val outputTextColor = if (isDark) Color(0xFFC9D1D9) else MaterialTheme.colorScheme.onSurface
             val emptyStateColor = if (isDark) Color(0xFF6E7681) else MaterialTheme.colorScheme.onSurfaceVariant
+            val lastFailedLine = lines.lastOrNull()?.takeIf { !isRunning && it.exitCode != 0 }
+
+            if (lastFailedLine != null && onFixWithAi != null) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Command exited with code ${lastFailedLine.exitCode}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Text(
+                                text = lastFailedLine.command,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 1,
+                                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f),
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        androidx.compose.material3.Button(
+                            onClick = { onFixWithAi(lastFailedLine.command, lastFailedLine.output, lastFailedLine.exitCode) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Text("⚡ Fix with AI", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
 
             // Console output area
             Surface(
@@ -373,7 +420,7 @@ fun TerminalScreen(
                         // empty until the user types. A permanent prompt/cursor here
                         // changed the console height and made auto-scroll look like a
                         // full terminal refresh on every blink.
-                        val prefix = if (isRunning) "" else "root@pocket:$terminalPromptPath# "
+                        val prefix = if (isRunning) "" else "root@cs-engine:$terminalPromptPath# "
                         val prefixVisualTransformation = remember(prefix, isDark) {
                             VisualTransformation { text ->
                                 val transformed = buildAnnotatedString {
@@ -530,7 +577,7 @@ private fun TerminalCommandPrompt(promptPath: String, command: String, isDark: B
     val promptText = remember(promptPath, command, isDark) {
         buildAnnotatedString {
             withStyle(SpanStyle(color = promptGreen, fontWeight = FontWeight.Bold)) {
-                append("root@pocket:$promptPath# ")
+                append("root@cs-engine:$promptPath# ")
             }
             withStyle(SpanStyle(color = commandColor, fontWeight = FontWeight.SemiBold)) {
                 append(command)

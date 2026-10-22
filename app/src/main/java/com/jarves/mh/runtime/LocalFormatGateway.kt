@@ -1,13 +1,17 @@
 package com.jarves.mh.runtime
 
-import com.jarves.mh.model.ProviderProfile
 import android.util.Log
+import com.jarves.mh.model.ProviderProtocol
+import com.jarves.mh.model.ProviderProfile
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URI
 import java.net.URL
 import java.security.MessageDigest
 import java.util.UUID
@@ -15,24 +19,27 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Small loopback-only Anthropic-to-OpenAI compatibility bridge for Claude Code. */
+/**
+ * Loopback-only Anthropic `/v1/messages` <-> OpenAI (`/v1/chat/completions` & `/v1/responses`)
+ * translation gateway with real-time SSE token/reasoning/tool streaming and custom header support.
+ */
 internal class LocalFormatGateway(
     private val profile: ProviderProfile,
     private val apiKey: String,
 ) : AutoCloseable {
     private val running = AtomicBoolean(true)
-    private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
+    private val server = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
     val url: String = "http://127.0.0.1:${server.localPort}"
 
     fun start(): LocalFormatGateway = apply {
-        Thread({ acceptLoop() }, "mh-format-gateway").apply { isDaemon = true; start() }
+        Thread({ acceptLoop() }, "cs-format-gateway").apply { isDaemon = true; start() }
     }
 
     private fun acceptLoop() {
         while (running.get()) {
             runCatching { server.accept() }.getOrNull()?.let { socket ->
                 runCatching { socket.soTimeout = SOCKET_TIMEOUT_MS }
-                Thread({ socket.use(::handle) }, "mh-format-request").apply { isDaemon = true; start() }
+                Thread({ socket.use(::handle) }, "cs-format-request").apply { isDaemon = true; start() }
             }
         }
     }
@@ -76,23 +83,274 @@ internal class LocalFormatGateway(
         }
         runCatching {
             val anthropic = JSONObject(bodyBytes.decodeToString())
-            val upstream = callProvider(toOpenAi(anthropic))
-            if (upstream.first !in 200..299) {
-                Log.w("FormatGateway", "Provider returned HTTP ${upstream.first}: ${providerError(upstream.second)}")
-                writeJson(output, upstream.first, errorJson("api_error", providerError(upstream.second)))
+            val wantsStream = anthropic.optBoolean("stream", false)
+            val modelName = anthropic.optString("model", profile.model)
+            val useResponsesApi = profile.effectiveClaudeProtocol == ProviderProtocol.OPENAI_RESPONSES
+            if (useResponsesApi) {
+                val upstream = callProviderJson(resolveUpstreamEndpoint(responses = true), toOpenAiResponses(anthropic))
+                if (upstream.first !in 200..299) {
+                    writeJson(output, upstream.first, errorJson("api_error", providerError(upstream.second)))
+                } else {
+                    val translated = fromOpenAiResponses(JSONObject(upstream.second), modelName)
+                    if (wantsStream) writeSyntheticStream(output, translated) else writeJson(output, 200, translated.toString())
+                }
+            } else if (wantsStream) {
+                streamChatCompletions(anthropic, modelName, output)
             } else {
-                val translated = fromOpenAi(JSONObject(upstream.second), anthropic.optString("model", profile.model))
-                if (anthropic.optBoolean("stream", false)) writeStream(output, translated) else writeJson(output, 200, translated.toString())
+                val upstream = callProviderJson(resolveUpstreamEndpoint(responses = false), toOpenAiChat(anthropic, stream = false))
+                if (upstream.first !in 200..299) {
+                    writeJson(output, upstream.first, errorJson("api_error", providerError(upstream.second)))
+                } else {
+                    val translated = fromOpenAiChat(JSONObject(upstream.second), modelName)
+                    writeJson(output, 200, translated.toString())
+                }
             }
         }.onFailure { error ->
-            writeJson(output, 502, errorJson("api_error", error.message ?: "Provider request failed"))
+            Log.w("FormatGateway", "Gateway request failed", error)
+            runCatching {
+                writeJson(output, 502, errorJson("api_error", error.message ?: "Provider request failed"))
+            }
         }
     }
 
-    private fun toOpenAi(source: JSONObject): JSONObject {
+    internal fun resolveUpstreamEndpoint(responses: Boolean): String {
+        val raw = profile.resolvedBaseUrl.trim().trimEnd('/')
+        if (responses) {
+            if (raw.endsWith("/responses")) return raw
+            val clean = raw.removeSuffix("/chat/completions").trimEnd('/')
+            val uriPath = runCatching { URI(clean).path.orEmpty().trimEnd('/') }.getOrDefault("")
+            return if (uriPath.isEmpty()) "$clean/v1/responses" else "$clean/responses"
+        }
+        if (raw.endsWith("/chat/completions")) return raw
+        val clean = raw.removeSuffix("/responses").trimEnd('/')
+        val uriPath = runCatching { URI(clean).path.orEmpty().trimEnd('/') }.getOrDefault("")
+        return if (uriPath.isEmpty()) "$clean/v1/chat/completions" else "$clean/chat/completions"
+    }
+
+    private fun openConfiguredConnection(endpoint: String): HttpURLConnection {
+        val connection = URL(endpoint).openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.connectTimeout = 20_000
+        connection.readTimeout = 240_000
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        if (apiKey.isNotBlank() && apiKey != "no-key-required") {
+            connection.setRequestProperty("Authorization", "Bearer $apiKey")
+        }
+        if (endpoint.startsWith("https://opencode.ai/zen/")) {
+            connection.setRequestProperty("User-Agent", "opencode/1.18.20")
+            connection.setRequestProperty("x-session-id", "session-${UUID.randomUUID()}")
+        }
+        profile.parsedCustomHeaders.forEach { (header, value) ->
+            connection.setRequestProperty(header, value)
+        }
+        return connection
+    }
+
+    /**
+     * Real-time SSE streaming from OpenAI `/chat/completions` (`stream: true`) directly into
+     * Anthropic's streaming protocol (`thinking_delta`, `text_delta`, `input_json_delta`), with
+     * automatic fallback if a self-hosted server returns non-streamed JSON instead of `text/event-stream`.
+     */
+    private fun streamChatCompletions(anthropic: JSONObject, modelName: String, output: BufferedOutputStream) {
+        val endpoint = resolveUpstreamEndpoint(responses = false)
+        if (!com.jarves.mh.network.LocalNetwork.isPlainHttpAllowed(endpoint)) {
+            writeJson(output, 400, errorJson("invalid_request_error", "Plain http:// is only allowed for local network addresses"))
+            return
+        }
+        val payload = toOpenAiChat(anthropic, stream = true)
+        val connection = openConfiguredConnection(endpoint)
+        connection.setRequestProperty("Accept", "text/event-stream, application/json")
+        try {
+            connection.outputStream.use { it.write(payload.toString().toByteArray()) }
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                val errBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                writeJson(output, code, errorJson("api_error", providerError(errBody)))
+                return
+            }
+            val contentType = connection.contentType.orEmpty().lowercase()
+            if (!contentType.contains("event-stream")) {
+                val fullBody = connection.inputStream.bufferedReader().use { it.readText() }
+                val translated = fromOpenAiChat(JSONObject(fullBody), modelName)
+                writeSyntheticStream(output, translated)
+                return
+            }
+
+            val headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+            output.write(headers.toByteArray())
+            fun emitEvent(name: String, data: JSONObject) {
+                output.write("event: $name\ndata: $data\n\n".toByteArray())
+                output.flush()
+            }
+
+            val msgId = "msg_${UUID.randomUUID()}"
+            emitEvent(
+                "message_start",
+                JSONObject()
+                    .put("type", "message_start")
+                    .put(
+                        "message",
+                        JSONObject()
+                            .put("id", msgId)
+                            .put("type", "message")
+                            .put("role", "assistant")
+                            .put("model", modelName)
+                            .put("content", JSONArray())
+                            .put("stop_reason", JSONObject.NULL)
+                            .put("stop_sequence", JSONObject.NULL)
+                            .put("usage", JSONObject().put("input_tokens", 0).put("output_tokens", 0)),
+                    ),
+            )
+
+            var nextBlockIndex = 0
+            var activeBlockType: String? = null
+            var activeBlockIndex = -1
+            val toolSlotToBlock = mutableMapOf<Int, Int>()
+            var sawToolCalls = false
+            var inputTokens = 0
+            var outputTokens = 0
+
+            fun closeActiveNonToolBlock() {
+                if (activeBlockType != null && activeBlockIndex >= 0) {
+                    emitEvent("content_block_stop", JSONObject().put("type", "content_block_stop").put("index", activeBlockIndex))
+                    activeBlockType = null
+                    activeBlockIndex = -1
+                }
+            }
+
+            BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { reader ->
+                while (true) {
+                    val rawLine = reader.readLine() ?: break
+                    val line = rawLine.trim()
+                    if (!line.startsWith("data:")) continue
+                    val dataStr = line.removePrefix("data:").trim()
+                    if (dataStr == "[DONE]" || dataStr.isEmpty()) continue
+                    val chunk = runCatching { JSONObject(dataStr) }.getOrNull() ?: continue
+
+                    chunk.optJSONObject("usage")?.let { usage ->
+                        inputTokens = usage.optInt("prompt_tokens", inputTokens)
+                        outputTokens = usage.optInt("completion_tokens", outputTokens)
+                    }
+
+                    val choice = chunk.optJSONArray("choices")?.optJSONObject(0) ?: continue
+                    val delta = choice.optJSONObject("delta") ?: choice.optJSONObject("message") ?: continue
+
+                    val reasoningDelta = delta.optString("reasoning_content").ifEmpty { delta.optString("reasoning") }
+                    if (reasoningDelta.isNotEmpty() && reasoningDelta != "null") {
+                        if (activeBlockType != "thinking") {
+                            closeActiveNonToolBlock()
+                            activeBlockIndex = nextBlockIndex++
+                            activeBlockType = "thinking"
+                            emitEvent(
+                                "content_block_start",
+                                JSONObject()
+                                    .put("type", "content_block_start")
+                                    .put("index", activeBlockIndex)
+                                    .put("content_block", JSONObject().put("type", "thinking").put("thinking", "")),
+                            )
+                        }
+                        emitEvent(
+                            "content_block_delta",
+                            JSONObject()
+                                .put("type", "content_block_delta")
+                                .put("index", activeBlockIndex)
+                                .put("delta", JSONObject().put("type", "thinking_delta").put("thinking", reasoningDelta)),
+                        )
+                    }
+
+                    val textDelta = if (delta.isNull("content")) "" else delta.optString("content")
+                    if (textDelta.isNotEmpty()) {
+                        if (activeBlockType != "text") {
+                            closeActiveNonToolBlock()
+                            activeBlockIndex = nextBlockIndex++
+                            activeBlockType = "text"
+                            emitEvent(
+                                "content_block_start",
+                                JSONObject()
+                                    .put("type", "content_block_start")
+                                    .put("index", activeBlockIndex)
+                                    .put("content_block", JSONObject().put("type", "text").put("text", "")),
+                            )
+                        }
+                        emitEvent(
+                            "content_block_delta",
+                            JSONObject()
+                                .put("type", "content_block_delta")
+                                .put("index", activeBlockIndex)
+                                .put("delta", JSONObject().put("type", "text_delta").put("text", textDelta)),
+                        )
+                    }
+
+                    val toolCalls = delta.optJSONArray("tool_calls")
+                    if (toolCalls != null && toolCalls.length() > 0) {
+                        closeActiveNonToolBlock()
+                        sawToolCalls = true
+                        for (i in 0 until toolCalls.length()) {
+                            val tc = toolCalls.optJSONObject(i) ?: continue
+                            val slot = tc.optInt("index", i)
+                            val fn = tc.optJSONObject("function")
+                            val blockIdx = toolSlotToBlock.getOrPut(slot) {
+                                val allocated = nextBlockIndex++
+                                val toolId = tc.optString("id").ifBlank { "tool_${UUID.randomUUID()}" }
+                                val toolName = fn?.optString("name").orEmpty().ifBlank { "tool" }
+                                emitEvent(
+                                    "content_block_start",
+                                    JSONObject()
+                                        .put("type", "content_block_start")
+                                        .put("index", allocated)
+                                        .put(
+                                            "content_block",
+                                            JSONObject()
+                                                .put("type", "tool_use")
+                                                .put("id", toolId)
+                                                .put("name", toolName)
+                                                .put("input", JSONObject()),
+                                        ),
+                                )
+                                allocated
+                            }
+                            val argFragment = fn?.optString("arguments").orEmpty()
+                            if (argFragment.isNotEmpty()) {
+                                emitEvent(
+                                    "content_block_delta",
+                                    JSONObject()
+                                        .put("type", "content_block_delta")
+                                        .put("index", blockIdx)
+                                        .put("delta", JSONObject().put("type", "input_json_delta").put("partial_json", argFragment)),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            closeActiveNonToolBlock()
+            toolSlotToBlock.values.sorted().forEach { idx ->
+                emitEvent("content_block_stop", JSONObject().put("type", "content_block_stop").put("index", idx))
+            }
+            emitEvent(
+                "message_delta",
+                JSONObject()
+                    .put("type", "message_delta")
+                    .put(
+                        "delta",
+                        JSONObject()
+                            .put("stop_reason", if (sawToolCalls) "tool_use" else "end_turn")
+                            .put("stop_sequence", JSONObject.NULL),
+                    )
+                    .put("usage", JSONObject().put("input_tokens", inputTokens).put("output_tokens", outputTokens)),
+            )
+            emitEvent("message_stop", JSONObject().put("type", "message_stop"))
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    internal fun toOpenAiChat(source: JSONObject, stream: Boolean = false): JSONObject {
         val target = JSONObject()
             .put("model", normalizeModel(profile.model))
-            .put("stream", false)
+            .put("stream", stream)
             .put("max_tokens", source.optInt("max_tokens", 4096))
         if (source.has("temperature")) target.put("temperature", source.get("temperature"))
         val messages = JSONArray()
@@ -121,7 +379,12 @@ internal class LocalFormatGateway(
                     "tool_use" -> toolCalls.put(
                         JSONObject().put("id", part.optString("id"))
                             .put("type", "function")
-                            .put("function", JSONObject().put("name", part.optString("name")).put("arguments", part.optJSONObject("input")?.toString() ?: "{}")),
+                            .put(
+                                "function",
+                                JSONObject()
+                                    .put("name", part.optString("name"))
+                                    .put("arguments", part.optJSONObject("input")?.toString() ?: "{}"),
+                            ),
                     )
                     "tool_result" -> toolResults += JSONObject()
                         .put("role", "tool")
@@ -141,52 +404,197 @@ internal class LocalFormatGateway(
             val converted = JSONArray()
             for (index in 0 until tools.length()) {
                 val tool = tools.getJSONObject(index)
-                converted.put(JSONObject().put("type", "function").put("function", JSONObject()
-                    .put("name", tool.optString("name"))
-                    .put("description", tool.optString("description"))
-                    .put("parameters", tool.optJSONObject("input_schema") ?: JSONObject().put("type", "object"))))
+                converted.put(
+                    JSONObject().put("type", "function").put(
+                        "function",
+                        JSONObject()
+                            .put("name", tool.optString("name"))
+                            .put("description", tool.optString("description"))
+                            .put("parameters", tool.optJSONObject("input_schema") ?: JSONObject().put("type", "object")),
+                    ),
+                )
             }
             target.put("tools", converted).put("tool_choice", "auto")
         }
         return target
     }
 
-    private fun fromOpenAi(source: JSONObject, model: String): JSONObject {
+    internal fun toOpenAiResponses(source: JSONObject): JSONObject {
+        val target = JSONObject()
+            .put("model", normalizeModel(profile.model))
+            .put("max_output_tokens", source.optInt("max_tokens", 4096))
+        source.opt("system")?.let { system ->
+            val text = if (system is JSONArray) contentText(system) else system.toString()
+            if (text.isNotBlank()) target.put("instructions", text)
+        }
+        val inputItems = JSONArray()
+        val sourceMessages = source.optJSONArray("messages") ?: JSONArray()
+        for (index in 0 until sourceMessages.length()) {
+            val message = sourceMessages.getJSONObject(index)
+            val role = message.optString("role", "user")
+            val content = message.opt("content")
+            if (content !is JSONArray) {
+                val textType = if (role == "assistant") "output_text" else "input_text"
+                inputItems.put(
+                    JSONObject()
+                        .put("role", role)
+                        .put("content", JSONArray().put(JSONObject().put("type", textType).put("text", content?.toString().orEmpty()))),
+                )
+                continue
+            }
+            val textParts = JSONArray()
+            for (partIndex in 0 until content.length()) {
+                val part = content.optJSONObject(partIndex) ?: continue
+                when (part.optString("type")) {
+                    "text" -> {
+                        val textType = if (role == "assistant") "output_text" else "input_text"
+                        textParts.put(JSONObject().put("type", textType).put("text", part.optString("text")))
+                    }
+                    "tool_use" -> inputItems.put(
+                        JSONObject()
+                            .put("type", "function_call")
+                            .put("call_id", part.optString("id"))
+                            .put("name", part.optString("name"))
+                            .put("arguments", part.optJSONObject("input")?.toString() ?: "{}"),
+                    )
+                    "tool_result" -> inputItems.put(
+                        JSONObject()
+                            .put("type", "function_call_output")
+                            .put("call_id", part.optString("tool_use_id"))
+                            .put("output", valueText(part.opt("content"))),
+                    )
+                }
+            }
+            if (textParts.length() > 0) {
+                inputItems.put(JSONObject().put("role", role).put("content", textParts))
+            }
+        }
+        target.put("input", inputItems)
+        source.optJSONArray("tools")?.let { tools ->
+            val converted = JSONArray()
+            for (index in 0 until tools.length()) {
+                val tool = tools.getJSONObject(index)
+                converted.put(
+                    JSONObject()
+                        .put("type", "function")
+                        .put("name", tool.optString("name"))
+                        .put("description", tool.optString("description"))
+                        .put("parameters", tool.optJSONObject("input_schema") ?: JSONObject().put("type", "object")),
+                )
+            }
+            target.put("tools", converted)
+        }
+        return target
+    }
+
+    internal fun fromOpenAiChat(source: JSONObject, model: String): JSONObject {
         val message = source.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message") ?: JSONObject()
         val content = JSONArray()
-        val text = message.optString("content")
+        val reasoning = message.optString("reasoning_content").ifBlank { message.optString("reasoning") }
+        if (reasoning.isNotBlank() && reasoning != "null") {
+            content.put(JSONObject().put("type", "thinking").put("thinking", reasoning))
+        }
+        val text = if (message.isNull("content")) "" else message.optString("content")
         if (text.isNotBlank()) content.put(JSONObject().put("type", "text").put("text", text))
         val calls = message.optJSONArray("tool_calls") ?: JSONArray()
         for (index in 0 until calls.length()) {
             val call = calls.getJSONObject(index)
             val function = call.optJSONObject("function") ?: JSONObject()
             val arguments = runCatching { JSONObject(function.optString("arguments", "{}")) }.getOrDefault(JSONObject())
-            content.put(JSONObject().put("type", "tool_use")
-                .put("id", call.optString("id").ifBlank { "tool_${UUID.randomUUID()}" })
-                .put("name", function.optString("name"))
-                .put("input", arguments))
+            content.put(
+                JSONObject()
+                    .put("type", "tool_use")
+                    .put("id", call.optString("id").ifBlank { "tool_${UUID.randomUUID()}" })
+                    .put("name", function.optString("name"))
+                    .put("input", arguments),
+            )
         }
         val usage = source.optJSONObject("usage") ?: JSONObject()
-        return JSONObject().put("id", source.optString("id").ifBlank { "msg_${UUID.randomUUID()}" })
-            .put("type", "message").put("role", "assistant").put("model", model)
-            .put("content", content).put("stop_reason", if (calls.length() > 0) "tool_use" else "end_turn")
+        return JSONObject()
+            .put("id", source.optString("id").ifBlank { "msg_${UUID.randomUUID()}" })
+            .put("type", "message")
+            .put("role", "assistant")
+            .put("model", model)
+            .put("content", content)
+            .put("stop_reason", if (calls.length() > 0) "tool_use" else "end_turn")
             .put("stop_sequence", JSONObject.NULL)
-            .put("usage", JSONObject().put("input_tokens", usage.optInt("prompt_tokens")).put("output_tokens", usage.optInt("completion_tokens")))
+            .put(
+                "usage",
+                JSONObject()
+                    .put("input_tokens", usage.optInt("prompt_tokens"))
+                    .put("output_tokens", usage.optInt("completion_tokens")),
+            )
     }
 
-    private fun callProvider(body: JSONObject): Pair<Int, String> {
-        val endpoint = profile.baseUrl.trimEnd('/') + "/chat/completions"
+    internal fun fromOpenAiResponses(source: JSONObject, model: String): JSONObject {
+        val content = JSONArray()
+        var sawToolCall = false
+        val outputs = source.optJSONArray("output") ?: JSONArray()
+        for (i in 0 until outputs.length()) {
+            val item = outputs.optJSONObject(i) ?: continue
+            when (item.optString("type")) {
+                "reasoning" -> {
+                    val summaryArr = item.optJSONArray("summary")
+                    val summaryText = buildString {
+                        if (summaryArr != null) {
+                            for (j in 0 until summaryArr.length()) {
+                                append(summaryArr.optJSONObject(j)?.optString("text").orEmpty())
+                            }
+                        }
+                    }
+                    if (summaryText.isNotBlank()) {
+                        content.put(JSONObject().put("type", "thinking").put("thinking", summaryText))
+                    }
+                }
+                "message" -> {
+                    val parts = item.optJSONArray("content") ?: JSONArray()
+                    for (j in 0 until parts.length()) {
+                        val p = parts.optJSONObject(j) ?: continue
+                        val txt = p.optString("text")
+                        if (txt.isNotBlank()) content.put(JSONObject().put("type", "text").put("text", txt))
+                    }
+                }
+                "function_call" -> {
+                    sawToolCall = true
+                    val arguments = runCatching { JSONObject(item.optString("arguments", "{}")) }.getOrDefault(JSONObject())
+                    content.put(
+                        JSONObject()
+                            .put("type", "tool_use")
+                            .put("id", item.optString("call_id").ifBlank { item.optString("id").ifBlank { "tool_${UUID.randomUUID()}" } })
+                            .put("name", item.optString("name"))
+                            .put("input", arguments),
+                    )
+                }
+            }
+        }
+        if (content.length() == 0) {
+            source.optString("output_text").takeIf(String::isNotBlank)?.let {
+                content.put(JSONObject().put("type", "text").put("text", it))
+            }
+        }
+        val usage = source.optJSONObject("usage") ?: JSONObject()
+        return JSONObject()
+            .put("id", source.optString("id").ifBlank { "msg_${UUID.randomUUID()}" })
+            .put("type", "message")
+            .put("role", "assistant")
+            .put("model", model)
+            .put("content", content)
+            .put("stop_reason", if (sawToolCall) "tool_use" else "end_turn")
+            .put("stop_sequence", JSONObject.NULL)
+            .put(
+                "usage",
+                JSONObject()
+                    .put("input_tokens", usage.optInt("input_tokens", usage.optInt("prompt_tokens")))
+                    .put("output_tokens", usage.optInt("output_tokens", usage.optInt("completion_tokens"))),
+            )
+    }
+
+    private fun callProviderJson(endpoint: String, body: JSONObject): Pair<Int, String> {
         if (!com.jarves.mh.network.LocalNetwork.isPlainHttpAllowed(endpoint)) {
             return 400 to errorJson("invalid_request_error", "Plain http:// is only allowed for local network addresses")
         }
-        val connection = URL(endpoint).openConnection() as HttpURLConnection
+        val connection = openConfiguredConnection(endpoint)
         return try {
-            connection.requestMethod = "POST"
-            connection.connectTimeout = 20_000
-            connection.readTimeout = 180_000
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer $apiKey")
             connection.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
@@ -196,22 +604,41 @@ internal class LocalFormatGateway(
         }
     }
 
-    private fun writeStream(output: BufferedOutputStream, message: JSONObject) {
+    private fun writeSyntheticStream(output: BufferedOutputStream, message: JSONObject) {
         val headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
         output.write(headers.toByteArray())
         fun event(name: String, data: JSONObject) { output.write("event: $name\ndata: $data\n\n".toByteArray()) }
         val content = message.getJSONArray("content")
-        event("message_start", JSONObject().put("type", "message_start").put("message", JSONObject(message.toString()).put("content", JSONArray()).put("stop_reason", JSONObject.NULL)))
+        event(
+            "message_start",
+            JSONObject()
+                .put("type", "message_start")
+                .put("message", JSONObject(message.toString()).put("content", JSONArray()).put("stop_reason", JSONObject.NULL)),
+        )
         for (index in 0 until content.length()) {
             val block = content.getJSONObject(index)
             val type = block.getString("type")
-            val start = if (type == "text") JSONObject().put("type", "text").put("text", "") else JSONObject().put("type", "tool_use").put("id", block.getString("id")).put("name", block.getString("name")).put("input", JSONObject())
+            val start = when (type) {
+                "thinking" -> JSONObject().put("type", "thinking").put("thinking", "")
+                "text" -> JSONObject().put("type", "text").put("text", "")
+                else -> JSONObject().put("type", "tool_use").put("id", block.getString("id")).put("name", block.getString("name")).put("input", JSONObject())
+            }
             event("content_block_start", JSONObject().put("type", "content_block_start").put("index", index).put("content_block", start))
-            val delta = if (type == "text") JSONObject().put("type", "text_delta").put("text", block.getString("text")) else JSONObject().put("type", "input_json_delta").put("partial_json", block.getJSONObject("input").toString())
+            val delta = when (type) {
+                "thinking" -> JSONObject().put("type", "thinking_delta").put("thinking", block.getString("thinking"))
+                "text" -> JSONObject().put("type", "text_delta").put("text", block.getString("text"))
+                else -> JSONObject().put("type", "input_json_delta").put("partial_json", block.getJSONObject("input").toString())
+            }
             event("content_block_delta", JSONObject().put("type", "content_block_delta").put("index", index).put("delta", delta))
             event("content_block_stop", JSONObject().put("type", "content_block_stop").put("index", index))
         }
-        event("message_delta", JSONObject().put("type", "message_delta").put("delta", JSONObject().put("stop_reason", message.getString("stop_reason")).put("stop_sequence", JSONObject.NULL)).put("usage", message.getJSONObject("usage")))
+        event(
+            "message_delta",
+            JSONObject()
+                .put("type", "message_delta")
+                .put("delta", JSONObject().put("stop_reason", message.getString("stop_reason")).put("stop_sequence", JSONObject.NULL))
+                .put("usage", message.getJSONObject("usage")),
+        )
         event("message_stop", JSONObject().put("type", "message_stop"))
         output.flush()
     }
@@ -224,29 +651,22 @@ internal class LocalFormatGateway(
         output.flush()
     }
 
-    /**
-     * Only forward requests that present the provider key Claude Code was configured with.
-     *
-     * Binding to 127.0.0.1 keeps this server off the network, but it does not make it
-     * private: on Android any app with the INTERNET permission can connect to a loopback
-     * port. Without this check, another installed app could have its requests forwarded
-     * upstream on the user's key.
-     */
     private fun isAuthorized(headers: Map<String, String>): Boolean {
         val presented = headers["x-api-key"]
-            ?: headers["authorization"]?.removePrefix("Bearer ")?.trim()
+            ?: headers["authorization"]?.removePrefix("Bearer ")?.removePrefix("bearer ")?.trim()
             ?: return false
         return MessageDigest.isEqual(presented.toByteArray(), apiKey.toByteArray())
     }
 
     private fun readLine(input: BufferedInputStream): String? {
         val bytes = ArrayList<Byte>()
-        while (true) {
+        while (bytes.size <= MAX_HEADER_LINE_BYTES) {
             val value = input.read()
             if (value < 0) return if (bytes.isEmpty()) null else bytes.toByteArray().decodeToString()
             if (value == '\n'.code) return bytes.toByteArray().decodeToString().trimEnd('\r')
             bytes += value.toByte()
         }
+        return null
     }
 
     private fun contentText(array: JSONArray): String = buildString {
@@ -269,11 +689,11 @@ internal class LocalFormatGateway(
 
     private fun normalizeModel(model: String): String = model
         .removePrefix("models/")
-        .removePrefix("anthropic/")
         .substringBefore('[')
         .trim()
 
-    private fun errorJson(type: String, message: String) = JSONObject().put("type", "error").put("error", JSONObject().put("type", type).put("message", message)).toString()
+    private fun errorJson(type: String, message: String) =
+        JSONObject().put("type", "error").put("error", JSONObject().put("type", type).put("message", message)).toString()
 
     override fun close() {
         running.set(false)
@@ -281,7 +701,8 @@ internal class LocalFormatGateway(
     }
 
     private companion object {
-        const val MAX_REQUEST_BYTES = 8 * 1024 * 1024
+        const val MAX_REQUEST_BYTES = 12 * 1024 * 1024
+        const val MAX_HEADER_LINE_BYTES = 16 * 1024
         const val SOCKET_TIMEOUT_MS = 30_000
     }
 }

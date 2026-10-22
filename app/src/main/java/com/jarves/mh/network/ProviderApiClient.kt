@@ -40,6 +40,7 @@ class ProviderApiClient(private val context: Context? = null) {
         baseUrl: String,
         apiKey: String,
         protocol: ProviderProtocol,
+        customHeaders: Map<String, String> = emptyMap(),
     ): ModelDiscoveryResult = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) {
             return@withContext ModelDiscoveryResult.Failure(text(R.string.rt_api_enter_base_url, "Enter a base URL first."))
@@ -57,7 +58,7 @@ class ProviderApiClient(private val context: Context? = null) {
             // not reduce discovery to the models allowed by that key's preferences.
             // The saved key is still used for validation and all inference requests.
             val discoveryKey = if (isOpenRouterCatalogEndpoint(endpoint)) "" else apiKey
-            val response = request(endpoint, "GET", discoveryKey, protocol = protocol)
+            val response = request(endpoint, "GET", discoveryKey, protocol = protocol, customHeaders = customHeaders)
             when {
                 response.code == 401 || response.code == 403 -> {
                     authError = true
@@ -96,6 +97,7 @@ class ProviderApiClient(private val context: Context? = null) {
         discoveredModels: List<DiscoveredModel>,
         openRouterProviderOrder: String = "",
         openRouterAllowFallbacks: Boolean = true,
+        customHeaders: Map<String, String> = emptyMap(),
     ): ConnectionValidation = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank() || model.isBlank()) {
             return@withContext ConnectionValidation.Failure(text(R.string.rt_api_required_fields, "Base URL, model, and API key are required."))
@@ -105,7 +107,16 @@ class ProviderApiClient(private val context: Context? = null) {
         // Gateways may need to cold-start a model before returning the first token.
         // A ten-second validation timeout produced false "network" failures even
         // though discovery and the endpoint itself were healthy.
-        val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 12_000, readTimeoutMs = 45_000)
+        val response = request(
+            endpoint,
+            "POST",
+            apiKey,
+            body,
+            protocol,
+            connectTimeoutMs = 12_000,
+            readTimeoutMs = 45_000,
+            customHeaders = customHeaders,
+        )
         when {
             response.code in 200..299 -> ConnectionValidation.Success(text(R.string.rt_api_connection_verified, "Connection verified."))
             response.code == 401 || response.code == 403 -> ConnectionValidation.Failure(
@@ -162,6 +173,7 @@ class ProviderApiClient(private val context: Context? = null) {
         protocol: ProviderProtocol,
         connectTimeoutMs: Int = 12_000,
         readTimeoutMs: Int = 20_000,
+        customHeaders: Map<String, String> = emptyMap(),
     ): HttpResult {
         if (!LocalNetwork.isPlainHttpAllowed(endpoint)) {
             return HttpResult(0, "", text(R.string.rt_api_http_public, "Plain http:// is only allowed for local network addresses. Use https:// for this server."))
@@ -173,7 +185,7 @@ class ProviderApiClient(private val context: Context? = null) {
                 readTimeout = readTimeoutMs
                 setRequestProperty("Accept", "application/json")
                 setRequestProperty("Content-Type", "application/json")
-                if (apiKey.isNotBlank()) {
+                if (apiKey.isNotBlank() && apiKey != "no-key-required") {
                     setRequestProperty("Authorization", "Bearer $apiKey")
                 }
                 if (endpoint.startsWith("https://opencode.ai/zen/")) {
@@ -181,9 +193,12 @@ class ProviderApiClient(private val context: Context? = null) {
                     setRequestProperty("User-Agent", "opencode/1.18.20")
                     setRequestProperty("x-session-id", "session-${UUID.randomUUID()}")
                 }
-                if (apiKey.isNotBlank() && protocol != ProviderProtocol.OPENROUTER && protocol != ProviderProtocol.OPENAI_CHAT && protocol != ProviderProtocol.OPENAI_RESPONSES) {
+                if (apiKey.isNotBlank() && apiKey != "no-key-required" && protocol != ProviderProtocol.OPENROUTER && protocol != ProviderProtocol.OPENAI_CHAT && protocol != ProviderProtocol.OPENAI_RESPONSES) {
                     setRequestProperty("x-api-key", apiKey)
                     setRequestProperty("anthropic-version", "2023-06-01")
+                }
+                customHeaders.forEach { (header, value) ->
+                    setRequestProperty(header, value)
                 }
                 if (body != null) doOutput = true
             }
@@ -207,10 +222,14 @@ class ProviderApiClient(private val context: Context? = null) {
 
     private fun modelEndpoints(baseUrl: String, protocol: ProviderProtocol): List<String> {
         val base = baseUrl.trim().trimEnd('/')
+            .removeSuffix("/chat/completions")
+            .removeSuffix("/responses")
+            .removeSuffix("/messages")
+            .trimEnd('/')
         val withoutAnthropic = base.removeSuffix("/anthropic")
         val candidates = when (protocol) {
             ProviderProtocol.OPENROUTER -> listOf("$base/v1/models")
-            ProviderProtocol.OPENAI_CHAT, ProviderProtocol.OPENAI_RESPONSES -> listOf("$base/models")
+            ProviderProtocol.OPENAI_CHAT, ProviderProtocol.OPENAI_RESPONSES -> listOf("$base/models", "$base/v1/models", "$base/api/tags")
             else -> listOf("$base/v1/models", "$base/models", "$withoutAnthropic/models", "$withoutAnthropic/v1/models")
         }
         return candidates.distinct()
@@ -220,9 +239,23 @@ class ProviderApiClient(private val context: Context? = null) {
         val base = baseUrl.trim().trimEnd('/')
         return when (protocol) {
             ProviderProtocol.OPENROUTER -> "$base/v1/messages"
-            ProviderProtocol.OPENAI_CHAT -> "$base/chat/completions"
-            ProviderProtocol.OPENAI_RESPONSES -> "$base/responses"
-            else -> if (base.endsWith("/v1")) "$base/messages" else "$base/v1/messages"
+            ProviderProtocol.OPENAI_CHAT -> {
+                if (base.endsWith("/chat/completions")) base
+                else {
+                    val clean = base.removeSuffix("/responses").trimEnd('/')
+                    val uriPath = runCatching { java.net.URI(clean).path.orEmpty().trimEnd('/') }.getOrDefault("")
+                    if (uriPath.isEmpty()) "$clean/v1/chat/completions" else "$clean/chat/completions"
+                }
+            }
+            ProviderProtocol.OPENAI_RESPONSES -> {
+                if (base.endsWith("/responses")) base
+                else {
+                    val clean = base.removeSuffix("/chat/completions").trimEnd('/')
+                    val uriPath = runCatching { java.net.URI(clean).path.orEmpty().trimEnd('/') }.getOrDefault("")
+                    if (uriPath.isEmpty()) "$clean/v1/responses" else "$clean/responses"
+                }
+            }
+            else -> if (base.endsWith("/messages")) base else if (base.endsWith("/v1")) "$base/messages" else "$base/v1/messages"
         }
     }
 

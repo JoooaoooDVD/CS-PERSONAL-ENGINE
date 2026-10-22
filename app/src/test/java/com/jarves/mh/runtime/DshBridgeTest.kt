@@ -340,15 +340,18 @@ class AgentProviderPresetTest {
     }
 
     @Test
-    fun deepSeekHarnessValidationUsesSelectedCustomProtocol() {
-        val profile = ProviderProfile(
+    fun universalCustomValidationHonorsSelectedProtocolAcrossAgents() {
+        val openAiProfile = ProviderProfile(
             ProviderKind.CUSTOM,
             baseUrl = "https://api.example.com/v1",
             model = "model",
             dshApi = "openai-completions",
         )
-        assertEquals(ProviderProtocol.OPENAI_CHAT, providerProtocolForAgent(profile, AgentKind.DEEPSEEK_HARNESS))
-        assertEquals(ProviderProtocol.ANTHROPIC_GATEWAY, providerProtocolForAgent(profile, AgentKind.CLAUDE_CODE))
+        assertEquals(ProviderProtocol.OPENAI_CHAT, providerProtocolForAgent(openAiProfile, AgentKind.DEEPSEEK_HARNESS))
+        assertEquals(ProviderProtocol.OPENAI_CHAT, providerProtocolForAgent(openAiProfile, AgentKind.CLAUDE_CODE))
+
+        val anthropicProfile = openAiProfile.copy(dshApi = "anthropic-messages")
+        assertEquals(ProviderProtocol.ANTHROPIC_GATEWAY, providerProtocolForAgent(anthropicProfile, AgentKind.CLAUDE_CODE))
     }
 
     @Test
@@ -374,12 +377,13 @@ class AgentProviderPresetTest {
     }
 
     @Test
-    fun dshHarnessExcludesClaudeSubscription() {
+    fun dshHarnessExcludesClaudeSubscriptionAndIncludesOpenAiCustom() {
         assertFalse(ProviderKind.CLAUDE in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.OPENCODE_ZEN in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.DEEPSEEK in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.NVIDIA_NIM in DEEPSEEK_HARNESS_PROVIDERS)
-        assertEquals(7, DEEPSEEK_HARNESS_PROVIDERS.size)
+        assertTrue(ProviderKind.OPENAI_CUSTOM in DEEPSEEK_HARNESS_PROVIDERS)
+        assertEquals(8, DEEPSEEK_HARNESS_PROVIDERS.size)
     }
 
     @Test

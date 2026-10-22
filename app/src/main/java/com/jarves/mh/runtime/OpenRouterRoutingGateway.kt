@@ -8,6 +8,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
@@ -38,6 +39,7 @@ internal class OpenRouterRoutingGateway(
     private fun acceptLoop() {
         while (running.get()) {
             runCatching { server.accept() }.getOrNull()?.let { socket ->
+                runCatching { socket.soTimeout = SOCKET_TIMEOUT_MS }
                 Thread({ socket.use(::handle) }, "mh-openrouter-request").apply { isDaemon = true; start() }
             }
         }
@@ -56,8 +58,12 @@ internal class OpenRouterRoutingGateway(
             val split = line.indexOf(':')
             if (split > 0) headers[line.substring(0, split).lowercase()] = line.substring(split + 1).trim()
         }
-        val length = headers["content-length"]?.toIntOrNull() ?: 0
         val output = BufferedOutputStream(socket.getOutputStream())
+        if (!isAuthorized(headers)) {
+            writeJson(output, 401, errorJson("Missing or invalid credentials"))
+            return
+        }
+        val length = headers["content-length"]?.toIntOrNull() ?: 0
         if (length !in 0..MAX_REQUEST_BYTES) {
             writeJson(output, 413, errorJson("Request is too large"))
             return
@@ -120,6 +126,13 @@ internal class OpenRouterRoutingGateway(
         output.flush()
     }
 
+    private fun isAuthorized(headers: Map<String, String>): Boolean {
+        val presented = headers["x-api-key"]
+            ?: headers["authorization"]?.removePrefix("Bearer ")?.removePrefix("bearer ")?.trim()
+            ?: return false
+        return MessageDigest.isEqual(presented.toByteArray(), apiKey.toByteArray())
+    }
+
     private fun readLine(input: BufferedInputStream): String? {
         val bytes = ArrayList<Byte>()
         while (bytes.size <= MAX_HEADER_LINE_BYTES) {
@@ -144,5 +157,6 @@ internal class OpenRouterRoutingGateway(
     private companion object {
         const val MAX_REQUEST_BYTES = 16 * 1024 * 1024
         const val MAX_HEADER_LINE_BYTES = 16 * 1024
+        const val SOCKET_TIMEOUT_MS = 30_000
     }
 }

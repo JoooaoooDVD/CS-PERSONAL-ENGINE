@@ -1550,6 +1550,7 @@ class RuntimeInstaller(private val context: Context) {
         // version before the global AAPT2 override was persisted.
         writeAndroidGradleConfiguration(rootfs)
         ensureWorkspaceTrust(guestWorkspacePath)
+        ensureGitAskPassAndConfig(rootfs)
         val bridge = File(context.filesDir, "runtime-bridge").apply { mkdirs() }
         val args = buildList {
             add(proot.absolutePath)
@@ -1581,12 +1582,19 @@ class RuntimeInstaller(private val context: Context) {
             addAll(guestCommand)
         }
         val prootTemp = File(context.cacheDir, "proot-tmp").apply { mkdirs() }
+        val savedGitHubPat = com.jarves.mh.data.ApiKeyVault(context).get(GITHUB_PAT_VAULT_KEY).orEmpty()
+        val prefs = com.jarves.mh.data.AppPreferences(context)
+        val gitAuthorName = prefs.githubName.ifBlank { prefs.githubLogin }.ifBlank { "CS Engine Developer" }
+        val gitAuthorEmail = prefs.githubEmail.ifBlank {
+            val login = prefs.githubLogin.ifBlank { "cs-engine" }
+            "$login@users.noreply.github.com"
+        }
         return NativeSpawnProcess.start(
             argv = args,
             environment = buildMap {
                 put("HOME", "/root")
                 val androidReady = File(rootfs, "root/.pocket-android-tools-version").readTextOrNull() == ANDROID_TOOLS_VERSION
-                val basePath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                val basePath = "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
                 if (androidReady) {
                     put("ANDROID_HOME", "/root/android-sdk")
                     put("ANDROID_SDK_ROOT", "/root/android-sdk")
@@ -1605,6 +1613,18 @@ class RuntimeInstaller(private val context: Context) {
                 put("PROOT_LOADER", File(context.applicationInfo.nativeLibraryDir, "libprootloader.so").absolutePath)
                 // Also protects any glibc helper Claude starts later.
                 put("GLIBC_TUNABLES", "glibc.pthread.rseq=0")
+                // Non-interactive Git & GitHub push support across Agents + Terminal.
+                put("GIT_TERMINAL_PROMPT", "0")
+                put("GIT_ASKPASS", "/opt/pocket/git-askpass.sh")
+                put("GIT_AUTHOR_NAME", gitAuthorName)
+                put("GIT_COMMITTER_NAME", gitAuthorName)
+                put("GIT_AUTHOR_EMAIL", gitAuthorEmail)
+                put("GIT_COMMITTER_EMAIL", gitAuthorEmail)
+                put("CS_GIT_USERNAME", prefs.githubLogin.ifBlank { "x-access-token" })
+                if (savedGitHubPat.isNotBlank()) {
+                    put("GITHUB_TOKEN", savedGitHubPat)
+                    put("GH_TOKEN", savedGitHubPat)
+                }
                 putAll(environment)
             },
             cwd = context.filesDir.absolutePath,
@@ -1613,6 +1633,68 @@ class RuntimeInstaller(private val context: Context) {
             ptyRows = ptyRows,
             ptyColumns = ptyColumns,
         )
+    }
+
+    /**
+     * Installs `/opt/pocket/git-askpass.sh` and ensures `/root/.gitconfig` has sane
+     * defaults (`safe.directory = *`, `init.defaultBranch = main`, user identity, and
+     * `gh auth git-credential` helper fallback) so `git commit` and `git push` work
+     * out-of-the-box without interactive TTY prompts.
+     */
+    private fun ensureGitAskPassAndConfig(runtimeRootfs: File) {
+        runCatching {
+            val askPass = File(runtimeRootfs, "opt/pocket/git-askpass.sh")
+            askPass.parentFile?.mkdirs()
+            val script = """#!/bin/sh
+case "${'$'}1" in
+  *Username*|*username*)
+    printf '%s\n' "${'$'}{CS_GIT_USERNAME:-x-access-token}"
+    ;;
+  *)
+    if [ -n "${'$'}GITHUB_TOKEN" ]; then
+      printf '%s\n' "${'$'}GITHUB_TOKEN"
+    elif [ -n "${'$'}GH_TOKEN" ]; then
+      printf '%s\n' "${'$'}GH_TOKEN"
+    elif [ -x /root/.local/bin/gh ]; then
+      /root/.local/bin/gh auth token 2>/dev/null || printf '\n'
+    else
+      printf '\n'
+    fi
+    ;;
+esac
+"""
+            if (!askPass.isFile || askPass.readTextOrNull() != script.trim()) {
+                askPass.writeText(script)
+                Os.chmod(askPass.absolutePath, 0b111101101)
+            }
+
+            val prefs = com.jarves.mh.data.AppPreferences(context)
+            val authorName = prefs.githubName.ifBlank { prefs.githubLogin }.ifBlank { "CS Engine Developer" }
+            val authorEmail = prefs.githubEmail.ifBlank {
+                val login = prefs.githubLogin.ifBlank { "cs-engine" }
+                "$login@users.noreply.github.com"
+            }
+            val gitConfig = File(runtimeRootfs, "root/.gitconfig")
+            gitConfig.parentFile?.mkdirs()
+            val managed = buildString {
+                appendLine("[user]")
+                appendLine("\tname = $authorName")
+                appendLine("\temail = $authorEmail")
+                appendLine("[init]")
+                appendLine("\tdefaultBranch = main")
+                appendLine("[safe]")
+                appendLine("\tdirectory = *")
+                appendLine("[push]")
+                appendLine("\tautoSetupRemote = true")
+                if (File(runtimeRootfs, "root/.local/bin/gh").isFile) {
+                    appendLine("[credential \"https://github.com\"]")
+                    appendLine("\thelper = !/root/.local/bin/gh auth git-credential")
+                }
+            }
+            if (gitConfig.readTextOrNull() != managed.trim()) {
+                gitConfig.writeText(managed)
+            }
+        }
     }
 
     fun ensureSettingsAndHooks() {
@@ -1908,6 +1990,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
     companion object {
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
+        const val GITHUB_PAT_VAULT_KEY = "GITHUB_PAT"
         private const val AGY_VERSION = "1.1.27"
         private const val AGY_RELEASE_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-arm/cli_linux_arm64.tar.gz"
         private const val AGY_RELEASE_SHA512 = "ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9"

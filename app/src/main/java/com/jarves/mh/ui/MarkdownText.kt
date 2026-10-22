@@ -189,40 +189,57 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
 
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF14171E),
+        color = Color(0xFF0A0C10),
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, Color(0xFF2A2E39), RoundedCornerShape(12.dp)),
+            .border(1.dp, Color(0xFF232834), RoundedCornerShape(12.dp)),
     ) {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1C202B))
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .background(Color(0xFF12161E))
+                    .padding(horizontal = 12.dp, vertical = 5.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = block.language.ifBlank { stringResource(R.string.ws_md_code_label) },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF9AA0A6),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF94A3B8),
                     fontFamily = FontFamily.Monospace,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     val shellLanguage = block.language.lowercase() in setOf("", "bash", "sh", "shell", "zsh", "console", "terminal")
-                    if (onRunCode != null && shellLanguage) {
-                        IconButton(
-                            onClick = { onRunCode(block.code.trim()) },
-                            modifier = Modifier.size(28.dp),
+                    if (onRunCode != null && shellLanguage && block.code.isNotBlank()) {
+                        Surface(
+                            modifier = Modifier.enginePressScale { onRunCode(block.code.trim()) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = PocketOrange.copy(alpha = 0.16f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, PocketOrange.copy(alpha = 0.5f)),
                         ) {
-                            Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = stringResource(R.string.ws_md_run_in_terminal),
-                                tint = PocketOrange,
-                                modifier = Modifier.size(18.dp),
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = stringResource(R.string.ws_md_run_in_terminal),
+                                    tint = PocketOrange,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Text(
+                                    text = "Run",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = PocketOrange,
+                                )
+                            }
                         }
                     }
                     IconButton(
@@ -239,8 +256,8 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                         Icon(
                             imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
                             contentDescription = stringResource(R.string.ws_md_copy_code),
-                            tint = if (copied) PocketOrange else Color(0xFF9AA0A6),
-                            modifier = Modifier.size(16.dp),
+                            tint = if (copied) PocketOrange else Color(0xFF94A3B8),
+                            modifier = Modifier.size(15.dp),
                         )
                     }
                 }

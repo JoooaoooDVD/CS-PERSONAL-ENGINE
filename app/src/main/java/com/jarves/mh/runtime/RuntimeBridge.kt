@@ -42,14 +42,20 @@ internal fun List<ChatMessage>.recentWithinCharacterBudget(maxCharacters: Int): 
 }
 
 /**
- * Self-hosted Custom API servers (llama.cpp, LM Studio, Strata…) often need no key, but the agent
- * CLIs refuse to start without one. Send a harmless placeholder that such servers ignore.
+ * Self-hosted Custom / OpenAI-Compatible API servers (Ollama, llama.cpp, LM Studio, vLLM, Strata…)
+ * often need no key, but the agent CLIs refuse to start without one. Send a harmless placeholder
+ * that such servers ignore.
  */
 internal fun localServerPlaceholderKey(profile: ProviderProfile): String =
-    if (profile.kind == com.jarves.mh.model.ProviderKind.CUSTOM) "no-key-required" else ""
+    if (profile.kind in setOf(com.jarves.mh.model.ProviderKind.CUSTOM, com.jarves.mh.model.ProviderKind.OPENAI_CUSTOM)) {
+        "no-key-required"
+    } else {
+        ""
+    }
 
 object RuntimeLaunchConfigBuilder {
     fun build(profile: ProviderProfile, authToken: String? = null, localGatewayUrl: String? = null): RuntimeLaunchConfig {
+        val effectiveProtocol = profile.effectiveClaudeProtocol
         val environment = linkedMapOf(
             "DISABLE_AUTOUPDATER" to "1",
             // Skip telemetry, error reporting and other background network calls. Each one costs
@@ -58,7 +64,7 @@ object RuntimeLaunchConfigBuilder {
             "DISABLE_TELEMETRY" to "1",
             "DISABLE_ERROR_REPORTING" to "1",
         )
-        when (profile.kind.protocol) {
+        when (effectiveProtocol) {
             com.jarves.mh.model.ProviderProtocol.CLAUDE_LOGIN -> {
                 require(!authToken.isNullOrBlank()) { "Enter a Claude subscription token first" }
                 environment["CLAUDE_CODE_OAUTH_TOKEN"] = authToken
@@ -68,13 +74,13 @@ object RuntimeLaunchConfigBuilder {
                 environment["ANTHROPIC_AUTH_TOKEN"] = ""
             }
             com.jarves.mh.model.ProviderProtocol.ANTHROPIC -> {
-                environment["ANTHROPIC_BASE_URL"] = profile.baseUrl.trimEnd('/')
+                environment["ANTHROPIC_BASE_URL"] = profile.resolvedBaseUrl.trimEnd('/')
                 environment["ANTHROPIC_MODEL"] = profile.model
             }
             com.jarves.mh.model.ProviderProtocol.ANTHROPIC_GATEWAY -> {
                 // Claude Code appends /v1/messages itself; accept base URLs entered with or
                 // without /v1 so the agent hits the same endpoint as Test connection.
-                environment["ANTHROPIC_BASE_URL"] = profile.baseUrl.trim().trimEnd('/').removeSuffix("/v1")
+                environment["ANTHROPIC_BASE_URL"] = profile.resolvedBaseUrl.trim().trimEnd('/').removeSuffix("/v1")
                 environment["ANTHROPIC_MODEL"] = profile.model
             }
             com.jarves.mh.model.ProviderProtocol.OPENROUTER -> {
@@ -90,7 +96,7 @@ object RuntimeLaunchConfigBuilder {
             }
         }
         val runtimeModel = environment["ANTHROPIC_MODEL"] ?: profile.model
-        if (profile.kind.protocol != com.jarves.mh.model.ProviderProtocol.CLAUDE_LOGIN) {
+        if (effectiveProtocol != com.jarves.mh.model.ProviderProtocol.CLAUDE_LOGIN) {
             environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] = runtimeModel
             environment["ANTHROPIC_DEFAULT_SONNET_MODEL"] = runtimeModel
             environment["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = runtimeModel

@@ -29,10 +29,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LightMode
@@ -61,6 +64,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -109,7 +113,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, UPDATE_CHANNEL }
+private enum class SettingsSection { APPEARANCE, ENGINE_AUTOMATION, LANGUAGE, TOOLS, RUNTIME, DIAGNOSTICS, UPDATE_CHANNEL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -144,6 +148,11 @@ fun SettingsScreen(
     onRefreshDiagnostics: () -> Unit = {},
     onStopInactiveProcesses: () -> Unit = {},
     onClearRuntimeCache: () -> Unit = {},
+    onSetAutoContextEnabled: (Boolean) -> Unit = {},
+    onSetAutoRunChatCommands: (Boolean) -> Unit = {},
+    onSaveCustomSystemInstructions: (String) -> Unit = {},
+    onSaveGitHubPat: (String, String, String) -> Unit = { _, _, _ -> },
+    onClearGitHubPat: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -223,6 +232,7 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_appearance),
                     subtitle = when (state.themeMode) {
                         AppThemeMode.DARK -> stringResource(R.string.theme_dark_subtitle)
+                        AppThemeMode.AMOLED -> stringResource(R.string.theme_amoled_subtitle)
                         AppThemeMode.LIGHT -> stringResource(R.string.theme_light_subtitle)
                         AppThemeMode.SYSTEM -> stringResource(R.string.theme_system_subtitle)
                     },
@@ -230,10 +240,125 @@ fun SettingsScreen(
                     expanded = expanded == SettingsSection.APPEARANCE,
                     onClick = { toggle(SettingsSection.APPEARANCE) },
                 ) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ModernThemeChoice(stringResource(R.string.theme_dark), Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
-                        ModernThemeChoice(stringResource(R.string.theme_light), Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
-                        ModernThemeChoice(stringResource(R.string.theme_system), Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ModernThemeChoice(stringResource(R.string.theme_dark), Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
+                            ModernThemeChoice(stringResource(R.string.theme_amoled), Icons.Default.Contrast, state.themeMode == AppThemeMode.AMOLED, { onSetThemeMode(AppThemeMode.AMOLED) }, Modifier.weight(1f))
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ModernThemeChoice(stringResource(R.string.theme_light), Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
+                            ModernThemeChoice(stringResource(R.string.theme_system), Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            item {
+                var instructionsDraft by rememberSaveable(state.customSystemInstructions) {
+                    mutableStateOf(state.customSystemInstructions)
+                }
+                var patDraft by rememberSaveable { mutableStateOf("") }
+                var gitNameDraft by rememberSaveable(state.githubAuthorName) { mutableStateOf(state.githubAuthorName) }
+                var gitEmailDraft by rememberSaveable(state.githubAuthorEmail) { mutableStateOf(state.githubAuthorEmail) }
+                SettingsAccordion(
+                    title = "Engine Automation & GitHub Push",
+                    subtitle = buildString {
+                        append(if (state.autoContextEnabled) "Vision ON" else "Vision OFF")
+                        append(" · ")
+                        append(if (state.autoRunChatCommands) "Auto-Exec ON" else "Manual Exec")
+                        if (state.hasGitHubPat || !state.githubLogin.isNullOrBlank()) append(" · GitHub Ready")
+                    },
+                    icon = Icons.Default.Bolt,
+                    expanded = expanded == SettingsSection.ENGINE_AUTOMATION,
+                    onClick = { toggle(SettingsSection.ENGINE_AUTOMATION) },
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Live Workspace Vision", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text(
+                                "Auto-attach active editor file, Git branch/changes, and recent terminal errors to prompts.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = state.autoContextEnabled, onCheckedChange = onSetAutoContextEnabled)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Auto-Execute Chat Shell Blocks", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text(
+                                "Automatically execute bash/sh code blocks emitted by the AI inside your project Linux workspace.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = state.autoRunChatCommands, onCheckedChange = onSetAutoRunChatCommands)
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    Text("Personal Engine System Rules", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    OutlinedTextField(
+                        value = instructionsDraft,
+                        onValueChange = { instructionsDraft = it },
+                        label = { Text("Persistent Personal Coding Instructions") },
+                        placeholder = { Text("Prefer TypeScript + strict types, write concise clean code, run tests after edits…") },
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { onSaveCustomSystemInstructions(instructionsDraft.trim()) },
+                        enabled = instructionsDraft.trim() != state.customSystemInstructions,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Save Personal Rules")
+                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Key, null, tint = PocketOrange, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("GitHub Push Token & Commit Identity", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    }
+                    OutlinedTextField(
+                        value = patDraft,
+                        onValueChange = { patDraft = it },
+                        label = { Text(if (state.hasGitHubPat) "Replace GitHub Personal Access Token (Active)" else "GitHub Personal Access Token (`repo`, `workflow`)") },
+                        placeholder = { Text("ghp_xxxxxxxxxxxxxxxxxxxx") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = gitNameDraft,
+                            onValueChange = { gitNameDraft = it },
+                            label = { Text("Author Name") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = gitEmailDraft,
+                            onValueChange = { gitEmailDraft = it },
+                            label = { Text("Author Email") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = {
+                                onSaveGitHubPat(patDraft.trim(), gitNameDraft.trim(), gitEmailDraft.trim())
+                                patDraft = ""
+                            },
+                            enabled = patDraft.isNotBlank() || gitNameDraft.isNotBlank() || gitEmailDraft.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Save Git Credentials")
+                        }
+                        if (state.hasGitHubPat) {
+                            OutlinedButton(onClick = onClearGitHubPat) {
+                                Text("Clear PAT", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
                     }
                 }
             }
@@ -480,7 +605,7 @@ fun SettingsScreen(
                         Icon(Icons.Default.Settings, null, Modifier.size(20.dp), tint = PocketOrange)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Mobile Harness", fontWeight = FontWeight.SemiBold)
+                            Text("CS Personal Engine", fontWeight = FontWeight.SemiBold)
                             Text(stringResource(R.string.settings_app_desc), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text("v${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

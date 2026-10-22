@@ -53,14 +53,14 @@ Java_com_jarves_mh_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectA
         master_fd = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
         if (master_fd < 0 || grantpt(master_fd) != 0 || unlockpt(master_fd) != 0) {
             if (master_fd >= 0) close(master_fd);
-            return NULL;
+            goto cleanup_fail;
         }
         const char *name = ptsname(master_fd);
-        if (!name) { close(master_fd); return NULL; }
+        if (!name) { close(master_fd); goto cleanup_fail; }
         slave_name = strdup(name);
-        if (!slave_name) { close(master_fd); return NULL; }
+        if (!slave_name) { close(master_fd); goto cleanup_fail; }
     } else if (pipe(in_pipe) != 0) {
-        return NULL;
+        goto cleanup_fail;
     }
     pid_t pid = fork();
     if (pid == 0) {
@@ -122,6 +122,16 @@ Java_com_jarves_mh_runtime_NativeSpawn_spawn(JNIEnv *env, jobject self, jobjectA
     jintArray result = (*env)->NewIntArray(env, 3);
     (*env)->SetIntArrayRegion(env, result, 0, 3, values);
     return result;
+
+cleanup_fail:
+    free(slave_name);
+    for (jsize i = 0; i < argc; i++) free(argv[i]);
+    for (jsize i = 0; i < envc; i++) free(envp[i]);
+    free(argv);
+    free(envp);
+    free(cwd);
+    free(output_path);
+    return NULL;
 }
 
 JNIEXPORT jint JNICALL

@@ -94,12 +94,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.annotation.StringRes
+import androidx.compose.foundation.horizontalScroll
 import com.jarves.mh.R
 import com.jarves.mh.data.ApiKeyInfo
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.DSH_PROTOCOL_PROVIDERS
+import com.jarves.mh.model.OPENAI_COMPATIBLE_PRESETS
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.UNIVERSAL_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.defaultDshApiForProvider
 import com.jarves.mh.model.inferredDshApiForUrl
 import com.jarves.mh.model.providersForAgent
@@ -211,6 +214,9 @@ fun AgentScreen(
     var openRouterAllowFallbacks by rememberSaveable(state.provider.openRouterAllowFallbacks) {
         mutableStateOf(state.provider.openRouterAllowFallbacks)
     }
+    var customHeaders by rememberSaveable(state.provider.customHeaders) {
+        mutableStateOf(state.provider.customHeaders)
+    }
     var apiKey by rememberSaveable(selectedKind) { mutableStateOf(getSavedApiKey(selectedKind)) }
     var savedKeys by remember(selectedKind, state.activeApiKeyName) {
         mutableStateOf(getSavedApiKeys(selectedKind))
@@ -278,7 +284,7 @@ fun AgentScreen(
         val effectiveKey = apiKey.trim().ifBlank { newApiKey.trim() }
         val supportsPublicDiscovery = selectedKind == ProviderKind.LLM_ROUTER ||
             selectedKind == ProviderKind.OPENCODE_ZEN ||
-            selectedKind == ProviderKind.CUSTOM // self-hosted servers often need no key
+            selectedKind in UNIVERSAL_PROTOCOL_PROVIDERS // self-hosted / local OpenAI servers often need no key
         if (effectiveKey.isBlank() && !supportsPublicDiscovery) {
             status = context.getString(R.string.st_discover_need_key)
             statusOk = false
@@ -301,6 +307,7 @@ fun AgentScreen(
                 dshApi = dshApi,
                 openRouterProviderOrder = openRouterProviderOrder,
                 openRouterAllowFallbacks = openRouterAllowFallbacks,
+                customHeaders = customHeaders,
             )
             when (val result = onDiscoverModels(profile, effectiveKey)) {
                 is ModelDiscoveryResult.Success -> {
@@ -1011,6 +1018,7 @@ fun AgentScreen(
                         dshApi = dshApi,
                         openRouterProviderOrder = openRouterProviderOrder,
                         openRouterAllowFallbacks = openRouterAllowFallbacks,
+                        customHeaders = customHeaders,
                         apiKey = apiKey,
                         models = models,
                         isDiscovering = isDiscovering,
@@ -1030,6 +1038,7 @@ fun AgentScreen(
                             dshApi = defaultDshApiForProvider(kind)
                             openRouterProviderOrder = ""
                             openRouterAllowFallbacks = true
+                            customHeaders = ""
                             models = emptyList()
                             modelSearch = ""
                             showModels = false
@@ -1040,7 +1049,7 @@ fun AgentScreen(
                         },
                         onBaseUrl = {
                             baseUrl = it
-                            if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind == ProviderKind.CUSTOM) {
+                            if (selectedKind == ProviderKind.CUSTOM) {
                                 dshApi = inferredDshApiForUrl(it)
                             }
                             models = emptyList()
@@ -1058,6 +1067,12 @@ fun AgentScreen(
                         },
                         onOpenRouterAllowFallbacks = {
                             openRouterAllowFallbacks = it
+                            status = null
+                            statusProviderMessage = null
+                            keyConnectionStatuses = emptyMap()
+                        },
+                        onCustomHeaders = {
+                            customHeaders = it
                             status = null
                             statusProviderMessage = null
                             keyConnectionStatuses = emptyMap()
@@ -1111,6 +1126,7 @@ fun AgentScreen(
                                     dshApi = dshApi,
                                     openRouterProviderOrder = openRouterProviderOrder,
                                     openRouterAllowFallbacks = openRouterAllowFallbacks,
+                                    customHeaders = customHeaders,
                                 )
                                 if (kind == ProviderKind.CLAUDE) {
                                     onSaveProvider(profile, apiKey.trim())
@@ -1522,6 +1538,7 @@ private fun AgentProviderCard(
     dshApi: String,
     openRouterProviderOrder: String,
     openRouterAllowFallbacks: Boolean,
+    customHeaders: String = "",
     apiKey: String,
     models: List<DiscoveredModel>,
     isDiscovering: Boolean,
@@ -1540,6 +1557,7 @@ private fun AgentProviderCard(
     onDshApi: (String) -> Unit,
     onOpenRouterProviderOrder: (String) -> Unit,
     onOpenRouterAllowFallbacks: (Boolean) -> Unit,
+    onCustomHeaders: (String) -> Unit = {},
     onNewKeyName: (String) -> Unit,
     onNewApiKey: (String) -> Unit,
     onToggleNewKey: () -> Unit,
@@ -1598,7 +1616,7 @@ private fun AgentProviderCard(
                                         .clickable {
                                             onProvider(kind)
                                             connectionExpanded = false
-                                            endpointExpanded = kind == ProviderKind.CUSTOM
+                                            endpointExpanded = kind in UNIVERSAL_PROTOCOL_PROVIDERS
                                         }
                                         .padding(horizontal = 13.dp, vertical = 11.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1624,10 +1642,10 @@ private fun AgentProviderCard(
 
                 PremiumSummaryRow(
                     icon = Icons.Default.Info,
-                    title = stringResource(if (selectedKind == ProviderKind.CUSTOM) R.string.agent_custom_api_settings else R.string.agent_endpoint_protocol),
+                    title = stringResource(if (selectedKind in UNIVERSAL_PROTOCOL_PROVIDERS) R.string.agent_custom_api_settings else R.string.agent_endpoint_protocol),
                     subtitle = buildString {
                         append(baseUrl.ifBlank { stringResource(R.string.st_base_url_required) })
-                        if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS) {
+                        if (selectedKind in UNIVERSAL_PROTOCOL_PROVIDERS || (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS)) {
                             append(" · ")
                             append(if (selectedKind.fixedProtocol) defaultDshApiForProvider(selectedKind) else dshApi)
                         }
@@ -1641,9 +1659,43 @@ private fun AgentProviderCard(
                         modifier = Modifier.padding(top = 8.dp, bottom = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (selectedKind == ProviderKind.CUSTOM) {
+                        if (selectedKind in UNIVERSAL_PROTOCOL_PROVIDERS) {
                             Text(
-                                stringResource(R.string.st_custom_endpoint_hint),
+                                "1-Tap OpenAI-Compatible & Self-Hosted Presets:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                OPENAI_COMPATIBLE_PRESETS.forEach { preset ->
+                                    val activePreset = baseUrl.trim().trimEnd('/').equals(preset.baseUrl.trimEnd('/'), ignoreCase = true)
+                                    Surface(
+                                        shape = RoundedCornerShape(9.dp),
+                                        color = if (activePreset) PocketOrange.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                        border = BorderStroke(1.dp, if (activePreset) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
+                                        modifier = Modifier.clickable {
+                                            onBaseUrl(preset.baseUrl)
+                                            onModel(preset.defaultModel)
+                                            onDshApi(preset.wireApi)
+                                        },
+                                    ) {
+                                        Text(
+                                            text = preset.label,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (activePreset) PocketOrange else MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                "Works with OpenAI, Groq, Together, Mistral, Fireworks, Cerebras, xAI, LiteLLM, vLLM, LM Studio, and Ollama. Leave API key blank for keyless local servers.",
                                 fontSize = 11.sp,
                                 lineHeight = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1653,6 +1705,7 @@ private fun AgentProviderCard(
                             value = baseUrl,
                             onValueChange = { if (!selectedKind.fixedBaseUrl) onBaseUrl(it) },
                             label = { Text(stringResource(R.string.provider_base_url)) },
+                            placeholder = { Text("https://api.openai.com/v1 or http://127.0.0.1:11434/v1") },
                             supportingText = if (selectedKind.fixedBaseUrl) ({ Text(stringResource(R.string.provider_fixed_by, stringResource(selectedKind.titleRes()))) }) else null,
                             readOnly = selectedKind.fixedBaseUrl,
                             singleLine = true,
@@ -1691,24 +1744,43 @@ private fun AgentProviderCard(
                                 )
                             }
                         }
-                        if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS && !selectedKind.fixedProtocol) {
+                        if (!selectedKind.fixedProtocol && (selectedKind in UNIVERSAL_PROTOCOL_PROVIDERS || (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS))) {
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 Text(stringResource(R.string.provider_gateway_protocol), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(5.dp))
                                 Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)) {
                                     Column {
-                                        listOf("anthropic-messages", "openai-completions", "openai-responses").forEach { option ->
+                                        listOf(
+                                            "openai-completions" to "OpenAI Chat Completions (/v1/chat/completions)",
+                                            "openai-responses" to "OpenAI Responses API (/v1/responses)",
+                                            "anthropic-messages" to "Anthropic Messages (/v1/messages)",
+                                        ).forEach { (option, desc) ->
                                             Row(
                                                 Modifier.fillMaxWidth().clickable { onDshApi(option) }.padding(horizontal = 12.dp, vertical = 9.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                             ) {
-                                                Text(option, Modifier.weight(1f), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(option, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+                                                    Text(desc, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
                                                 AgentSelectionDot(dshApi == option)
                                             }
                                         }
                                     }
                                 }
                             }
+                        }
+                        if (selectedKind in UNIVERSAL_PROTOCOL_PROVIDERS) {
+                            OutlinedTextField(
+                                value = customHeaders,
+                                onValueChange = onCustomHeaders,
+                                label = { Text("Custom HTTP Headers (optional)") },
+                                placeholder = { Text("CF-Access-Client-Id: ...\nX-Custom-Gateway: my-token") },
+                                supportingText = { Text("One `Header: Value` per line — forwarded on every model & agent request.") },
+                                maxLines = 4,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                            )
                         }
                     }
                 }
@@ -1894,7 +1966,7 @@ private fun AgentProviderCard(
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
                 onClick = onValidate,
-                enabled = (apiKey.isNotBlank() || selectedKind == ProviderKind.CUSTOM) && !isDiscovering && !isValidating &&
+                enabled = (apiKey.isNotBlank() || selectedKind in UNIVERSAL_PROTOCOL_PROVIDERS) && !isDiscovering && !isValidating &&
                     (selectedKind == ProviderKind.CLAUDE || (baseUrl.isNotBlank() && model.isNotBlank())),
                 modifier = Modifier.fillMaxWidth().height(46.dp),
                 shape = RoundedCornerShape(13.dp),
@@ -2187,6 +2259,13 @@ private fun defaultModelsForProvider(kind: ProviderKind, context: android.conten
         DiscoveredModel("kimi-k2.6", "Kimi K2.6"),
         DiscoveredModel("moonshot-v1-8k", "Moonshot v1 8K"),
         DiscoveredModel("moonshot-v1-32k", "Moonshot v1 32K"),
+    )
+    ProviderKind.OPENAI_CUSTOM -> listOf(
+        DiscoveredModel("gpt-4o", "GPT-4o (OpenAI)"),
+        DiscoveredModel("gpt-4.1", "GPT-4.1 (OpenAI)"),
+        DiscoveredModel("o3-mini", "o3-mini Reasoning"),
+        DiscoveredModel("llama-3.3-70b-versatile", "Llama 3.3 70B (Groq)"),
+        DiscoveredModel("qwen2.5-coder:32b", "Qwen 2.5 Coder 32B (Ollama / vLLM)"),
     )
     else -> if (kind.defaultModel.isNotBlank()) listOf(
         DiscoveredModel(kind.defaultModel, context.getString(R.string.md_model_default, context.getString(kind.titleRes()), kind.defaultModel))

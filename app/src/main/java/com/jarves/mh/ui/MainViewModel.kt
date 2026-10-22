@@ -40,6 +40,8 @@ import com.jarves.mh.model.AndroidTemplate
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
 import com.jarves.mh.model.ProviderProfile
+import com.jarves.mh.model.GitStatusSnapshot
+import com.jarves.mh.model.UNIVERSAL_PROTOCOL_PROVIDERS
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
@@ -47,11 +49,13 @@ import com.jarves.mh.model.projectSlug
 import com.jarves.mh.model.generateQuickChatIdentity
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.network.ConnectionValidation
+import com.jarves.mh.network.GitHubClient
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.network.ProviderApiClient
 import com.jarves.mh.network.GitHubRepository
 import com.jarves.mh.runtime.ClaudeRuntimeBridge
 import com.jarves.mh.runtime.DshRuntimeBridge
+import com.jarves.mh.runtime.GitWorkspaceManager
 import com.jarves.mh.runtime.AgentRegistry
 import com.jarves.mh.runtime.AgentUpdateInfo
 import com.jarves.mh.runtime.AntigravityAuthController
@@ -401,6 +405,19 @@ data class AppUiState(
     val appUpdateDownloadedBytes: Long = 0L,
     val appUpdateTotalBytes: Long = -1L,
     val appUpdateError: String? = null,
+    val autoContextEnabled: Boolean = true,
+    val autoRunChatCommands: Boolean = false,
+    val liveStreamExpanded: Boolean = true,
+    val customSystemInstructions: String = "",
+    val hasGitHubPat: Boolean = false,
+    val githubAuthorName: String = "",
+    val githubAuthorEmail: String = "",
+    val gitStatus: GitStatusSnapshot = GitStatusSnapshot(),
+    val gitBusy: Boolean = false,
+    val gitFeedbackMessage: String? = null,
+    val detectedServerPorts: List<Int> = emptyList(),
+    val streamingAssistantPreview: String? = null,
+    val activeToolHeadline: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -416,6 +433,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val installer = RuntimeInstaller(application)
+    private val gitManager = GitWorkspaceManager(application, installer, vault, preferences)
     private val antigravityRuntime = AntigravityRuntimeBridge(
         application,
         model = { _state.value.antigravityModel },
@@ -498,8 +516,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
             languageCode = preferences.languageCode,
             projects = preferences.loadProjects(),
-            githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
+            githubAuthStatus = if (vault.get(RuntimeInstaller.GITHUB_PAT_VAULT_KEY)?.isNotBlank() == true || preferences.githubLogin.isNotBlank()) {
+                GitHubAuthStatus.CONNECTED
+            } else {
+                GitHubAuthStatus.DISCONNECTED
+            },
             githubLogin = preferences.githubLogin.takeIf(String::isNotBlank),
+            autoContextEnabled = preferences.autoContextEnabled,
+            autoRunChatCommands = preferences.autoRunChatCommands,
+            liveStreamExpanded = preferences.liveStreamExpanded,
+            customSystemInstructions = preferences.customSystemInstructions,
+            hasGitHubPat = vault.get(RuntimeInstaller.GITHUB_PAT_VAULT_KEY)?.isNotBlank() == true,
+            githubAuthorName = preferences.githubName,
+            githubAuthorEmail = preferences.githubEmail,
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
             }.toSet() + DevStack.WEB,
@@ -1978,10 +2007,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun toggleTheme() {
-        val next = if (_state.value.themeMode == com.jarves.mh.ui.theme.AppThemeMode.DARK) {
-            com.jarves.mh.ui.theme.AppThemeMode.LIGHT
-        } else {
-            com.jarves.mh.ui.theme.AppThemeMode.DARK
+        val next = when (_state.value.themeMode) {
+            com.jarves.mh.ui.theme.AppThemeMode.DARK -> com.jarves.mh.ui.theme.AppThemeMode.AMOLED
+            com.jarves.mh.ui.theme.AppThemeMode.AMOLED -> com.jarves.mh.ui.theme.AppThemeMode.LIGHT
+            else -> com.jarves.mh.ui.theme.AppThemeMode.DARK
         }
         setThemeMode(next)
     }
@@ -1989,6 +2018,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setThemeMode(mode: com.jarves.mh.ui.theme.AppThemeMode) {
         preferences.themeMode = mode.name.lowercase()
         _state.update { it.copy(themeMode = mode) }
+    }
+
+    fun setAutoContextEnabled(enabled: Boolean) {
+        preferences.autoContextEnabled = enabled
+        _state.update { it.copy(autoContextEnabled = enabled) }
+    }
+
+    fun setAutoRunChatCommands(enabled: Boolean) {
+        preferences.autoRunChatCommands = enabled
+        _state.update { it.copy(autoRunChatCommands = enabled) }
+    }
+
+    fun toggleLiveStreamExpanded() {
+        val next = !_state.value.liveStreamExpanded
+        preferences.liveStreamExpanded = next
+        _state.update { it.copy(liveStreamExpanded = next) }
+    }
+
+    fun saveCustomSystemInstructions(instructions: String) {
+        val trimmed = instructions.trim().take(4000)
+        preferences.customSystemInstructions = trimmed
+        _state.update {
+            it.copy(
+                customSystemInstructions = trimmed,
+                toastMessage = "Saved personal engine rules",
+            )
+        }
+    }
+
+    fun executeCommandFromChat(command: String) {
+        val project = _state.value.activeProject ?: return
+        val clean = command.trim()
+        if (clean.isBlank()) return
+        if (!_state.value.projectTerminalRunning && !_state.value.androidBuildRunning) {
+            _state.update { it.copy(projectTerminalCwd = projectGuestRoot(project)) }
+            requestProjectTerminalCommand(clean)
+        } else {
+            prepareProjectTerminalCommand(clean)
+        }
+    }
+
+    fun fixTerminalFailureWithAi(command: String, output: String, exitCode: Int) {
+        val project = _state.value.activeProject ?: return
+        val tail = sanitizeTerminalOutput(output).takeLast(3500).trim()
+        val prompt = buildString {
+            appendLine("Fix this failed terminal command in my workspace:")
+            appendLine("Command: `$command` (exit code $exitCode)")
+            if (tail.isNotBlank()) {
+                appendLine()
+                appendLine("Console error output:")
+                appendLine("```")
+                appendLine(tail)
+                appendLine("```")
+            }
+            appendLine()
+            append("Diagnose the root cause, apply any needed file fixes, and verify the command succeeds.")
+        }
+        startPrompt(project, prompt, emptyList())
+    }
+
+    fun openDetectedServerPort(port: Int) {
+        val url = "http://127.0.0.1:$port"
+        _state.update { it.copy(previewReady = true, previewUrl = url) }
     }
 
     fun setLanguage(code: String) {
@@ -2818,8 +2910,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun discoverModels(profile: ProviderProfile, secret: String): ModelDiscoveryResult {
-        val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
-        return providerApi.discoverModels(profile.baseUrl, key, providerProtocolForAgent(profile, _state.value.agentKind))
+        val rawKey = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
+        val key = rawKey.ifBlank { if (profile.kind in UNIVERSAL_PROTOCOL_PROVIDERS) "no-key-required" else "" }
+        return providerApi.discoverModels(
+            baseUrl = profile.resolvedBaseUrl,
+            apiKey = key,
+            protocol = providerProtocolForAgent(profile, _state.value.agentKind),
+            customHeaders = profile.parsedCustomHeaders,
+        )
     }
 
     suspend fun validateProvider(
@@ -2827,15 +2925,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         secret: String,
         models: List<com.jarves.mh.network.DiscoveredModel>,
     ): ConnectionValidation {
-        val key = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
+        val rawKey = secret.ifBlank { vault.get(profile.kind.name).orEmpty() }
+        val key = rawKey.ifBlank { if (profile.kind in UNIVERSAL_PROTOCOL_PROVIDERS) "no-key-required" else "" }
         return providerApi.validate(
-            profile.baseUrl,
-            profile.model,
-            key,
-            providerProtocolForAgent(profile, _state.value.agentKind),
-            models,
-            profile.openRouterProviderOrder,
-            profile.openRouterAllowFallbacks,
+            baseUrl = profile.resolvedBaseUrl,
+            model = profile.model,
+            apiKey = key,
+            protocol = providerProtocolForAgent(profile, _state.value.agentKind),
+            discoveredModels = models,
+            openRouterProviderOrder = profile.openRouterProviderOrder,
+            openRouterAllowFallbacks = profile.openRouterAllowFallbacks,
+            customHeaders = profile.parsedCustomHeaders,
         )
     }
 
@@ -2859,19 +2959,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             testClaudeSubscription(profile)
             return
         }
-        if (profile.baseUrl.isBlank() || profile.model.isBlank()) return
+        if (profile.resolvedBaseUrl.isBlank() || profile.model.isBlank()) return
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = str(R.string.vm_ping_sending)) }
         viewModelScope.launch {
-            val key = vault.get(profile.kind.name).orEmpty()
+            val rawKey = vault.get(profile.kind.name).orEmpty()
+            val key = rawKey.ifBlank { if (profile.kind in UNIVERSAL_PROTOCOL_PROVIDERS) "no-key-required" else "" }
             val result = providerApi.validate(
-                profile.baseUrl,
-                profile.model,
-                key,
-                providerProtocolForAgent(profile, _state.value.agentKind),
-                emptyList(),
-                profile.openRouterProviderOrder,
-                profile.openRouterAllowFallbacks,
+                baseUrl = profile.resolvedBaseUrl,
+                model = profile.model,
+                apiKey = key,
+                protocol = providerProtocolForAgent(profile, _state.value.agentKind),
+                discoveredModels = emptyList(),
+                openRouterProviderOrder = profile.openRouterProviderOrder,
+                openRouterAllowFallbacks = profile.openRouterAllowFallbacks,
+                customHeaders = profile.parsedCustomHeaders,
             )
             when (result) {
                 is ConnectionValidation.Success -> _state.update {
@@ -3527,6 +3629,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "auth", "login",
                             "--hostname", "github.com",
                             "--git-protocol", "https",
+                            "--scopes", "repo,workflow,read:org,user:email",
                             "--web",
                             "--insecure-storage",
                         ),
@@ -3572,6 +3675,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         githubAuthProcess = null
                         outputFile.delete()
                     }
+                    runCatching { runGitHubCli(listOf("auth", "setup-git", "--hostname", "github.com")) }
                     githubAccountLogin() ?: error(str(R.string.vm_github_account_unknown))
                 }
             }
@@ -3622,11 +3726,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshGitHubRepositories() {
-        if (_state.value.githubAuthStatus != GitHubAuthStatus.CONNECTED) return
+        val pat = vault.get(RuntimeInstaller.GITHUB_PAT_VAULT_KEY).orEmpty()
+        if (_state.value.githubAuthStatus != GitHubAuthStatus.CONNECTED && pat.isBlank()) return
         if (_state.value.githubRepositoriesLoading) return
         _state.update { it.copy(githubRepositoriesLoading = true, githubMessage = str(R.string.vm_loading_repositories)) }
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { githubRepositoriesFromCli() } }
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (pat.isNotBlank()) {
+                        GitHubClient(getApplication()).repositories(pat)
+                    } else {
+                        githubRepositoriesFromCli()
+                    }
+                }
+            }
             result.onSuccess { repositories ->
                 _state.update {
                     it.copy(
@@ -3642,6 +3755,142 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         githubMessage = error.message ?: str(R.string.vm_github_repos_failed),
                     )
                 }
+            }
+        }
+    }
+
+    fun saveGitHubPat(pat: String, authorName: String, authorEmail: String) {
+        viewModelScope.launch {
+            _state.update { it.copy(gitBusy = true, gitFeedbackMessage = "Verifying GitHub credentials…") }
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (pat.isNotBlank()) {
+                        val account = GitHubClient(getApplication()).account(pat)
+                        vault.put(RuntimeInstaller.GITHUB_PAT_VAULT_KEY, pat)
+                        preferences.githubLogin = account.login
+                        preferences.githubName = authorName.ifBlank { account.gitAuthorName }
+                        preferences.githubEmail = authorEmail.ifBlank { account.gitAuthorEmail }
+                        account.login
+                    } else {
+                        if (authorName.isNotBlank()) preferences.githubName = authorName
+                        if (authorEmail.isNotBlank()) preferences.githubEmail = authorEmail
+                        preferences.githubLogin
+                    }
+                }
+            }
+            result.onSuccess { login ->
+                val hasPat = vault.get(RuntimeInstaller.GITHUB_PAT_VAULT_KEY)?.isNotBlank() == true
+                _state.update {
+                    it.copy(
+                        gitBusy = false,
+                        hasGitHubPat = hasPat,
+                        githubAuthStatus = if (hasPat || login.isNotBlank()) GitHubAuthStatus.CONNECTED else it.githubAuthStatus,
+                        githubLogin = login.takeIf(String::isNotBlank) ?: it.githubLogin,
+                        githubAuthorName = preferences.githubName,
+                        githubAuthorEmail = preferences.githubEmail,
+                        gitFeedbackMessage = if (login.isNotBlank()) "Connected to GitHub as @$login — Git push ready!" else "Saved Git author identity.",
+                    )
+                }
+                if (hasPat) refreshGitHubRepositories()
+            }.onFailure { err ->
+                _state.update {
+                    it.copy(
+                        gitBusy = false,
+                        gitFeedbackMessage = err.message ?: "Failed to verify GitHub token",
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearGitHubPat() {
+        vault.remove(RuntimeInstaller.GITHUB_PAT_VAULT_KEY)
+        _state.update {
+            it.copy(
+                hasGitHubPat = false,
+                gitFeedbackMessage = "Cleared saved GitHub Personal Access Token.",
+            )
+        }
+    }
+
+    fun refreshGitStatus() {
+        val project = _state.value.activeProject ?: return
+        viewModelScope.launch {
+            val snap = withContext(Dispatchers.IO) {
+                gitManager.inspectStatus(projectWorkspaceRoot(project), project.slug)
+            }
+            if (_state.value.activeProject?.id == project.id) {
+                _state.update { it.copy(gitStatus = snap) }
+            }
+        }
+    }
+
+    fun gitInitRepo() {
+        val project = _state.value.activeProject ?: return
+        runGitAction { gitManager.initRepository(projectWorkspaceRoot(project), project.slug) }
+    }
+
+    fun gitCommitAndPush(commitMessage: String, pushAfterCommit: Boolean) {
+        val project = _state.value.activeProject ?: return
+        runGitAction {
+            gitManager.commitAndPush(
+                workspace = projectWorkspaceRoot(project),
+                projectSlug = project.slug,
+                commitMessage = commitMessage,
+                pushAfterCommit = pushAfterCommit,
+            )
+        }
+    }
+
+    fun gitPull() {
+        val project = _state.value.activeProject ?: return
+        runGitAction { gitManager.pullLatest(projectWorkspaceRoot(project), project.slug) }
+    }
+
+    fun gitCheckoutBranch(branch: String, create: Boolean) {
+        val project = _state.value.activeProject ?: return
+        runGitAction { gitManager.checkoutOrCreateBranch(projectWorkspaceRoot(project), project.slug, branch, create) }
+    }
+
+    fun gitSetRemoteUrl(url: String) {
+        val project = _state.value.activeProject ?: return
+        runGitAction { gitManager.configureRemoteUrl(projectWorkspaceRoot(project), project.slug, url) }
+    }
+
+    fun gitCreateRepoAndPush(name: String, description: String, isPrivate: Boolean, commitMessage: String) {
+        val project = _state.value.activeProject ?: return
+        runGitAction {
+            gitManager.createGitHubRepoAndPush(
+                workspace = projectWorkspaceRoot(project),
+                projectSlug = project.slug,
+                repoName = name,
+                description = description,
+                isPrivate = isPrivate,
+                commitMessage = commitMessage,
+            )
+        }
+    }
+
+    fun gitAutoGenerateCommitMessage(): String {
+        val project = _state.value.activeProject ?: return "chore: update workspace"
+        val snap = _state.value.gitStatus
+        if (snap.modifiedFiles.isEmpty()) return "chore: sync workspace via CS Personal Engine"
+        val names = snap.modifiedFiles.take(3).map { it.path.substringAfterLast('/') }.distinct().joinToString(", ")
+        val suffix = if (snap.modifiedFiles.size > 3) " (+${snap.modifiedFiles.size - 3} more)" else ""
+        return "feat: update $names$suffix"
+    }
+
+    private fun runGitAction(block: () -> Result<String>) {
+        if (_state.value.gitBusy) return
+        _state.update { it.copy(gitBusy = true, gitFeedbackMessage = null) }
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) { block() }
+            outcome.onSuccess { msg ->
+                _state.update { it.copy(gitBusy = false, gitFeedbackMessage = msg, toastMessage = msg) }
+                refreshProjectFiles()
+            }.onFailure { err ->
+                _state.update { it.copy(gitBusy = false, gitFeedbackMessage = err.message ?: "Git operation failed") }
+                refreshGitStatus()
             }
         }
     }
@@ -3680,6 +3929,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun refreshGitHubConnection() = withContext(Dispatchers.IO) {
+        val pat = vault.get(RuntimeInstaller.GITHUB_PAT_VAULT_KEY).orEmpty()
+        if (pat.isNotBlank()) {
+            val account = runCatching { GitHubClient(getApplication()).account(pat) }.getOrNull()
+            if (account != null) {
+                preferences.githubLogin = account.login
+                if (preferences.githubName.isBlank()) preferences.githubName = account.gitAuthorName
+                if (preferences.githubEmail.isBlank()) preferences.githubEmail = account.gitAuthorEmail
+                _state.update {
+                    it.copy(
+                        hasGitHubPat = true,
+                        githubAuthStatus = GitHubAuthStatus.CONNECTED,
+                        githubLogin = account.login,
+                        githubAuthorName = preferences.githubName,
+                        githubAuthorEmail = preferences.githubEmail,
+                        githubMessage = str(R.string.vm_github_connected_as, account.login),
+                    )
+                }
+                return@withContext
+            }
+        }
         if (!installer.isGitHubCliInstalled()) return@withContext
         val login = runCatching { githubAccountLogin() }.getOrNull()
         if (login.isNullOrBlank()) {
@@ -3980,17 +4249,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             if (_state.value.activeProject?.id == project.id) {
+                val listeningPorts = withContext(Dispatchers.IO) { inspectListeningDevPorts() }
                 _state.update {
                     it.copy(
                         workspaceFiles = entries,
                         filesLoading = false,
                         suggestedProjectRoot = suggestedRoot,
                         androidProjectDetected = androidProjectDetected,
+                        detectedServerPorts = listeningPorts,
                     )
                 }
                 loadMissingFolderCounts(project, entries)
+                refreshGitStatus()
             }
         }
+    }
+
+    private fun inspectListeningDevPorts(): List<Int> {
+        val candidatePorts = setOf(3000, 3001, 4173, 4200, 4321, 5000, 5173, 5174, 8000, 8080, 8888)
+        val found = sortedSetOf<Int>()
+        listOf("/proc/net/tcp", "/proc/net/tcp6").forEach { procPath ->
+            runCatching {
+                File(procPath).takeIf(File::isFile)?.useLines { lines ->
+                    lines.drop(1).forEach { line ->
+                        val parts = line.trim().split(Regex("\\s+"))
+                        val localAddr = parts.getOrNull(1) ?: return@forEach
+                        val stateHex = parts.getOrNull(3) ?: return@forEach
+                        if (stateHex == "0A") { // TCP_LISTEN
+                            val port = localAddr.substringAfter(':', "").toIntOrNull(16)
+                            if (port != null && port in candidatePorts) found += port
+                        }
+                    }
+                }
+            }
+        }
+        return found.toList()
     }
 
     fun loadProjectDirectory(relativePath: String) {
@@ -4728,12 +5021,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // requestText is sent to the agent, so it stays English; the chat title is user-facing.
         val requestText = prompt.trim().ifBlank { "Please review the attached files." }
         updateActiveChatTitle(prompt.trim().ifBlank { str(R.string.md_chat_title_attachments) })
+        val snapshot = _state.value
+        val startedAt = System.currentTimeMillis()
         _state.update {
-            val startedAt = System.currentTimeMillis()
             it.copy(
                 messages = it.messages + ChatMessage(fromUser = true, text = prompt.trim(), attachments = attachments),
                 pendingAttachments = emptyList(),
                 isRunning = true,
+                streamingAssistantPreview = null,
+                activeToolHeadline = "Planning execution strategy…",
                 activity = listOf(ActivityItem(str(R.string.vm_understanding_request), str(R.string.vm_preparing_safe_plan), false)) + it.activity,
                 liveProcess = listOf(ActivityItem("Think", requestPlanningSummary(requestText, it.agentKind), false)),
                 liveThinking = true,
@@ -4747,15 +5043,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         touchProject(project.id)
         persistMessages()
         val history = state.value.messages // includes all messages up to now
-        val runtimePrompt = if (attachments.isEmpty()) requestText else buildString {
-            appendLine(requestText)
-            appendLine()
-            appendLine("<attached_files>")
-            attachments.forEach { attachment ->
-                appendLine("- ${attachment.displayName}: ${projectGuestRoot(project)}/${attachment.relativePath} (${attachment.mimeType})")
+        val runtimePrompt = buildString {
+            append(requestText)
+            if (attachments.isNotEmpty()) {
+                appendLine()
+                appendLine()
+                appendLine("<attached_files>")
+                attachments.forEach { attachment ->
+                    appendLine("- ${attachment.displayName}: ${projectGuestRoot(project)}/${attachment.relativePath} (${attachment.mimeType})")
+                }
+                appendLine("These files were explicitly attached by the user. Inspect them only as needed for the request.")
+                append("</attached_files>")
             }
-            appendLine("These files were explicitly attached by the user. Inspect them only as needed for the request.")
-            appendLine("</attached_files>")
+            if (snapshot.customSystemInstructions.isNotBlank()) {
+                appendLine()
+                appendLine()
+                appendLine("<personal_engine_rules>")
+                appendLine(snapshot.customSystemInstructions)
+                append("</personal_engine_rules>")
+            }
+            if (snapshot.autoContextEnabled) {
+                val contextLines = buildList {
+                    snapshot.openedFile?.let { file ->
+                        add("Active editor file: ${file.path}" + if (file.dirty) " (has unsaved buffer edits)" else "")
+                    }
+                    if (snapshot.gitStatus.initialized) {
+                        val changedCount = snapshot.gitStatus.modifiedFiles.size
+                        val remoteInfo = snapshot.gitStatus.remoteUrl.ifBlank { "no remote configured" }
+                        add("Git state: branch=${snapshot.gitStatus.branch}, changed_files=$changedCount, remote=$remoteInfo")
+                    }
+                    snapshot.projectTerminalLines.lastOrNull()?.takeIf { it.exitCode != 0 }?.let { failed ->
+                        add("Last failed terminal command (`${failed.command}`, exit ${failed.exitCode}): ${failed.output.takeLast(600).replace('\n', ' ')}")
+                    }
+                    if (snapshot.androidBuildIssues.isNotEmpty()) {
+                        val topIssues = snapshot.androidBuildIssues.take(3).joinToString("; ") { "${it.filePath ?: "build"}:${it.line ?: 0} ${it.detail}" }
+                        add("Recent Android build issues: $topIssues")
+                    }
+                }
+                if (contextLines.isNotEmpty()) {
+                    appendLine()
+                    appendLine()
+                    appendLine("<live_workspace_context>")
+                    contextLines.forEach { appendLine("- $it") }
+                    append("</live_workspace_context>")
+                }
+            }
         }
         failedApiKeyIds.clear()
         activeRuntimeRequest = RuntimeRetryRequest(
@@ -4988,11 +5320,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         current
                     }
                     val lastMessage = timeline.messages.lastOrNull()
-                    if (lastMessage != null && !lastMessage.fromUser && lastMessage.workItems.isEmpty() && lastMessage.workedMillis == 0L) {
-                        timeline.copy(messages = timeline.messages.dropLast(1) + lastMessage.copy(text = lastMessage.text + event.text))
+                    val updatedText: String
+                    val updatedMessages = if (lastMessage != null && !lastMessage.fromUser && lastMessage.workItems.isEmpty() && lastMessage.workedMillis == 0L) {
+                        updatedText = lastMessage.text + event.text
+                        timeline.messages.dropLast(1) + lastMessage.copy(text = updatedText)
                     } else {
-                        timeline.copy(messages = timeline.messages + ChatMessage(fromUser = false, text = event.text))
+                        updatedText = event.text
+                        timeline.messages + ChatMessage(fromUser = false, text = event.text)
                     }
+                    timeline.copy(
+                        messages = updatedMessages,
+                        streamingAssistantPreview = updatedText.takeLast(600),
+                        activeToolHeadline = "Writing response live…",
+                    )
                 }
                 is RuntimeEvent.ReasoningProgress -> {
                     val existingIndex = current.liveProcess.indexOfLast { it.title == "Think" }
@@ -5055,6 +5395,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         },
                         liveThinking = false,
                         activeThinkingBlockId = null,
+                        activeToolHeadline = "${event.toolName}: ${event.detail.replace('\n', ' ').take(120)}",
                         activity = (listOf(
                             ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
                         ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it })
@@ -5070,6 +5411,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         !it.isComplete && it.title == "Running ${event.toolName}"
                     }
                     if (runningIndex < 0) current else current.copy(
+                        activeToolHeadline = "${event.toolName}: ${event.detail.replace('\n', ' ').take(120)}",
                         liveProcess = current.liveProcess.toMutableList().also { items ->
                             items[runningIndex] = boundedActivityItem(
                                 items[runningIndex].copy(detail = event.detail),
@@ -5149,6 +5491,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     attachTaskDuration(finishWorkSegment(current, finishedAt), finishedAt).copy(
                         isRunning = false,
                         activeSessionId = null,
+                        activeToolHeadline = null,
                         activity = listOf(ActivityItem(str(R.string.vm_task_completed), str(R.string.vm_agent_finished, current.agentKind.localizedTitle(getApplication())))) +
                             current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
                         taskFinishedAtMillis = finishedAt,
@@ -5167,6 +5510,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ).copy(
                         isRunning = false,
                         activeSessionId = null,
+                        activeToolHeadline = null,
                         pendingApproval = null,
                         toastMessage = displayReason.takeIf {
                             event.reason.contains("user not found", true) ||
@@ -5178,6 +5522,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         currentTaskRequest = null,
                     )
                 }
+            }
+        }
+        if (event is RuntimeEvent.SessionCompleted && _state.value.autoRunChatCommands) {
+            val latestAssistant = _state.value.messages.lastOrNull { !it.fromUser }?.text.orEmpty()
+            val shellBlocks = Regex("```(?:bash|sh|shell|zsh)\\s*\\n([\\s\\S]*?)```", RegexOption.IGNORE_CASE)
+                .findAll(latestAssistant)
+                .map { it.groupValues[1].trim() }
+                .filter(String::isNotBlank)
+                .toList()
+            if (shellBlocks.isNotEmpty() && !_state.value.projectTerminalRunning) {
+                executeCommandFromChat(shellBlocks.joinToString(" && "))
             }
         }
         if (terminalEventForActiveSession) {

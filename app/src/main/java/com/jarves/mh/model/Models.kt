@@ -41,7 +41,21 @@ enum class ProviderKind(
         fixedBaseUrl = true,
         fixedProtocol = true,
     ),
-    CUSTOM("Custom API", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "", "", true),
+    OPENAI_CUSTOM(
+        "OpenAI-Compatible API",
+        "OpenAI, Groq, Together, Ollama, vLLM & custom /v1 servers",
+        ProviderProtocol.OPENAI_CHAT,
+        "https://api.openai.com/v1",
+        "gpt-4.1",
+    ),
+    CUSTOM(
+        "Custom API",
+        "Universal Anthropic / OpenAI-compatible gateway",
+        ProviderProtocol.ANTHROPIC_GATEWAY,
+        "",
+        "",
+        true,
+    ),
 }
 
 /**
@@ -89,6 +103,7 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.KIMI,
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
+    ProviderKind.OPENAI_CUSTOM,
     ProviderKind.CUSTOM,
 )
 
@@ -96,12 +111,40 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.KIMI,
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
+    ProviderKind.OPENAI_CUSTOM,
     ProviderKind.CUSTOM,
+)
+
+/** Providers whose wire protocol can be chosen for BOTH Claude Code (via LocalFormatGateway) and DSH. */
+val UNIVERSAL_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
+    ProviderKind.OPENAI_CUSTOM,
+    ProviderKind.CUSTOM,
+)
+
+data class OpenAiCompatiblePreset(
+    val id: String,
+    val label: String,
+    val baseUrl: String,
+    val defaultModel: String,
+    val wireApi: String = "openai-completions",
+    val keyOptional: Boolean = false,
+)
+
+val OPENAI_COMPATIBLE_PRESETS: List<OpenAiCompatiblePreset> = listOf(
+    OpenAiCompatiblePreset("openai", "OpenAI", "https://api.openai.com/v1", "gpt-4.1"),
+    OpenAiCompatiblePreset("groq", "Groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+    OpenAiCompatiblePreset("together", "Together AI", "https://api.together.xyz/v1", "Qwen/Qwen2.5-Coder-32B-Instruct"),
+    OpenAiCompatiblePreset("mistral", "Mistral / Codestral", "https://api.mistral.ai/v1", "codestral-latest"),
+    OpenAiCompatiblePreset("fireworks", "Fireworks AI", "https://api.fireworks.ai/inference/v1", "accounts/fireworks/models/deepseek-v3"),
+    OpenAiCompatiblePreset("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "qwen-3-32b"),
+    OpenAiCompatiblePreset("xai", "xAI Grok", "https://api.x.ai/v1", "grok-3-mini"),
+    OpenAiCompatiblePreset("ollama", "Ollama (Local)", "http://127.0.0.1:11434/v1", "qwen2.5-coder:7b", keyOptional = true),
+    OpenAiCompatiblePreset("lmstudio", "LM Studio / vLLM", "http://127.0.0.1:1234/v1", "local-model", keyOptional = true),
 )
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
     ProviderKind.OPENCODE_ZEN -> "openai-responses"
-    ProviderKind.NVIDIA_NIM -> "openai-completions"
+    ProviderKind.NVIDIA_NIM, ProviderKind.OPENAI_CUSTOM -> "openai-completions"
     else -> "anthropic-messages"
 }
 
@@ -114,14 +157,21 @@ fun inferredDshApiForUrl(baseUrl: String): String {
     return when {
         normalized.endsWith("/responses") -> "openai-responses"
         "/anthropic" in normalized || "api.anthropic.com" in normalized -> "anthropic-messages"
-        normalized.endsWith("/v1") -> "openai-completions"
+        normalized.endsWith("/v1") || "api.openai.com" in normalized || "groq.com" in normalized ||
+            "together.xyz" in normalized || "mistral.ai" in normalized || ":11434" in normalized ||
+            ":1234" in normalized -> "openai-completions"
         else -> "anthropic-messages"
     }
 }
 
-/** Resolves the protocol DeepSeek Harness will actually use for this saved profile. */
+/** Resolves the protocol the selected coding agent will actually use for this saved profile. */
 fun providerProtocolForAgent(profile: ProviderProfile, agent: AgentKind): ProviderProtocol {
-    if (agent != AgentKind.DEEPSEEK_HARNESS || profile.kind !in DSH_PROTOCOL_PROVIDERS) {
+    val supportsCustomWireChoice = when (agent) {
+        AgentKind.DEEPSEEK_HARNESS -> profile.kind in DSH_PROTOCOL_PROVIDERS
+        AgentKind.CLAUDE_CODE -> profile.kind in UNIVERSAL_PROTOCOL_PROVIDERS
+        AgentKind.ANTIGRAVITY -> false
+    }
+    if (!supportsCustomWireChoice) {
         return profile.kind.protocol
     }
     val api = if (profile.kind.fixedProtocol) defaultDshApiForProvider(profile.kind) else profile.dshApi
@@ -144,21 +194,39 @@ data class ProviderProfile(
     val baseUrl: String = kind.defaultBaseUrl,
     val model: String = kind.defaultModel,
     val hasSecret: Boolean = false,
-    /** dsh custom-route wire protocol for CUSTOM: anthropic-messages | openai-completions | openai-responses. */
+    /** Custom-route wire protocol: anthropic-messages | openai-completions | openai-responses. */
     val dshApi: String = defaultDshApiForProvider(kind),
     /** Comma-separated OpenRouter provider slugs, tried in order. Blank keeps automatic routing. */
     val openRouterProviderOrder: String = "",
     /** Whether OpenRouter may use providers outside [openRouterProviderOrder]. */
     val openRouterAllowFallbacks: Boolean = true,
+    /** Newline-separated `Header-Name: value` pairs sent to Custom / OpenAI-Compatible endpoints. */
+    val customHeaders: String = "",
 ) {
     /** Effective base URL: fixed kinds always resolve to their constant, ignoring stored drift. */
     val resolvedBaseUrl: String get() = if (kind.fixedBaseUrl) kind.defaultBaseUrl else baseUrl
+
+    /** Effective protocol when driving Claude Code (resolves custom OpenAI/Anthropic wire selection). */
+    val effectiveClaudeProtocol: ProviderProtocol
+        get() = providerProtocolForAgent(this, AgentKind.CLAUDE_CODE)
 
     val openRouterProviders: List<String>
         get() = openRouterProviderOrder.split(',')
             .map(String::trim)
             .filter(String::isNotBlank)
             .distinct()
+
+    val parsedCustomHeaders: Map<String, String>
+        get() = customHeaders.lineSequence()
+            .map(String::trim)
+            .filter { it.isNotBlank() && ':' in it }
+            .mapNotNull { line ->
+                val split = line.indexOf(':')
+                val name = line.substring(0, split).trim()
+                val value = line.substring(split + 1).trim()
+                if (name.isBlank() || value.isBlank()) null else name to value
+            }
+            .toMap()
 }
 
 enum class ProjectKind { PROJECT, QUICK_PROJECT }
@@ -380,4 +448,75 @@ data class ActivityItem(
     val detail: String,
     val isComplete: Boolean = true,
     val isCommand: Boolean = false,
+)
+
+data class GitFileChange(
+    val status: String,
+    val path: String,
+    val staged: Boolean = false,
+)
+
+data class GitStatusSnapshot(
+    val initialized: Boolean = false,
+    val branch: String = "main",
+    val branches: List<String> = emptyList(),
+    val remoteUrl: String = "",
+    val aheadCount: Int = 0,
+    val behindCount: Int = 0,
+    val modifiedFiles: List<GitFileChange> = emptyList(),
+    val lastCommitSummary: String = "",
+    val loading: Boolean = false,
+    val busyAction: String? = null,
+    val statusMessage: String? = null,
+    val statusError: Boolean = false,
+) {
+    val hasChanges: Boolean get() = modifiedFiles.isNotEmpty()
+    val hasRemote: Boolean get() = remoteUrl.isNotBlank()
+}
+
+data class EngineSlashCommand(
+    val command: String,
+    val title: String,
+    val description: String,
+    val expandedPrompt: String,
+    val immediateAction: String? = null,
+)
+
+val ENGINE_SLASH_COMMANDS: List<EngineSlashCommand> = listOf(
+    EngineSlashCommand(
+        command = "/push",
+        title = "Commit & Push to GitHub",
+        description = "Inspect git status, craft a clean commit message, commit all changes, and push to origin",
+        expandedPrompt = "Inspect `git status` and `git diff`, stage all project changes, write a concise conventional commit message, commit, and push the current branch to GitHub (`origin`). Verify the push succeeded.",
+    ),
+    EngineSlashCommand(
+        command = "/fix",
+        title = "Auto-Diagnose & Fix Errors",
+        description = "Analyze latest terminal/build errors and fix root causes automatically",
+        expandedPrompt = "Inspect the recent terminal output, build logs, and modified files in this workspace. Identify the root cause of any errors or failing commands, apply the fix cleanly, and run verification commands to prove it works.",
+    ),
+    EngineSlashCommand(
+        command = "/run",
+        title = "Detect & Start Dev Server",
+        description = "Install missing dependencies if needed and launch the project's dev/start command",
+        expandedPrompt = "Inspect this project's configuration (`package.json`, `pyproject.toml`, `Cargo.toml`, `Makefile`, etc.), install dependencies if missing, and run or verify the main build/test/dev command.",
+    ),
+    EngineSlashCommand(
+        command = "/review",
+        title = "Deep Security & Code Audit",
+        description = "Audit architecture, edge cases, security bugs, and performance bottlenecks",
+        expandedPrompt = "Perform a thorough staff-level code & security review of the current project. Identify concrete bugs, security vulnerabilities, race conditions, and architectural improvements with exact file & line references.",
+    ),
+    EngineSlashCommand(
+        command = "/test",
+        title = "Write & Run Unit Tests",
+        description = "Generate comprehensive tests for recent changes and execute the test suite",
+        expandedPrompt = "Write thorough unit/integration tests covering the core logic and edge cases of this project, then run the test suite and fix any failures until everything passes.",
+    ),
+    EngineSlashCommand(
+        command = "/ci",
+        title = "Generate GitHub Actions CI",
+        description = "Create a production-ready `.github/workflows` build & release pipeline",
+        expandedPrompt = "Create or upgrade `.github/workflows/ci.yml` for this project with caching, automated tests, linting, and release artifact publishing tailored to this codebase.",
+    ),
 )

@@ -4,8 +4,8 @@ import android.content.Context
 import com.jarves.mh.R
 import com.jarves.mh.ui.AppStrings
 import java.net.HttpURLConnection
-import java.net.URLEncoder
 import java.net.URL
+import java.net.URLEncoder
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -17,7 +17,19 @@ data class GitHubDeviceCode(
     val intervalSeconds: Long,
 )
 
-data class GitHubAccount(val login: String, val avatarUrl: String)
+data class GitHubAccount(
+    val login: String,
+    val avatarUrl: String,
+    val id: Long = 0L,
+    val name: String = "",
+    val email: String = "",
+) {
+    val gitAuthorName: String get() = name.ifBlank { login }
+    val gitAuthorEmail: String
+        get() = email.ifBlank {
+            if (id > 0L) "$id+$login@users.noreply.github.com" else "$login@users.noreply.github.com"
+        }
+}
 
 data class GitHubRepository(
     val fullName: String,
@@ -39,10 +51,13 @@ class GitHubClient(private val context: Context? = null) {
     private fun text(@androidx.annotation.StringRes id: Int, fallback: String, vararg args: Any): String =
         context?.let { AppStrings.get(it, id, *args) } ?: fallback
 
-    fun requestDeviceCode(clientId: String): GitHubDeviceCode {
+    fun requestDeviceCode(clientId: String, scopes: String = "repo workflow read:org user:email"): GitHubDeviceCode {
         val json = postForm(
             "https://github.com/login/device/code",
-            mapOf("client_id" to clientId),
+            mapOf(
+                "client_id" to clientId,
+                "scope" to scopes,
+            ),
         )
         return GitHubDeviceCode(
             deviceCode = json.getString("device_code"),
@@ -68,13 +83,27 @@ class GitHubClient(private val context: Context? = null) {
             "slow_down" -> GitHubTokenPoll.Pending(slowDown = true)
             "access_denied" -> GitHubTokenPoll.Failure(text(R.string.rt_gh_cancelled, "GitHub authorization was cancelled"))
             "expired_token" -> GitHubTokenPoll.Failure(text(R.string.rt_gh_code_expired, "The GitHub sign-in code expired. Try again."))
-            else -> GitHubTokenPoll.Failure(json.optString("error_description").ifBlank { error.ifBlank { text(R.string.rt_gh_sign_in_failed, "GitHub sign-in failed") } })
+            else -> GitHubTokenPoll.Failure(
+                json.optString("error_description").ifBlank {
+                    error.ifBlank { text(R.string.rt_gh_sign_in_failed, "GitHub sign-in failed") }
+                },
+            )
         }
     }
 
     fun account(token: String): GitHubAccount {
         val json = getJson("https://api.github.com/user", token) as JSONObject
-        return GitHubAccount(json.getString("login"), json.optString("avatar_url"))
+        val login = json.getString("login")
+        val id = json.optLong("id", 0L)
+        val name = if (json.isNull("name")) "" else json.optString("name", "")
+        val email = if (json.isNull("email")) "" else json.optString("email", "")
+        return GitHubAccount(
+            login = login,
+            avatarUrl = json.optString("avatar_url"),
+            id = id,
+            name = name,
+            email = email,
+        )
     }
 
     fun repositories(token: String): List<GitHubRepository> {
@@ -92,7 +121,7 @@ class GitHubClient(private val context: Context? = null) {
                     cloneUrl = item.getString("clone_url"),
                     private = item.optBoolean("private"),
                     defaultBranch = item.optString("default_branch", "main"),
-                    description = item.optString("description"),
+                    description = if (item.isNull("description")) "" else item.optString("description"),
                     updatedAt = item.optString("updated_at"),
                 )
                 result[repo.fullName] = repo
@@ -103,9 +132,36 @@ class GitHubClient(private val context: Context? = null) {
         return result.values.toList()
     }
 
+    fun createRepository(
+        token: String,
+        name: String,
+        description: String = "",
+        isPrivate: Boolean = true,
+    ): GitHubRepository {
+        val cleanName = name.trim().replace(Regex("[^A-Za-z0-9._-]"), "-").trim('-').take(100)
+        require(cleanName.isNotBlank()) { "Repository name cannot be empty" }
+        val payload = JSONObject()
+            .put("name", cleanName)
+            .put("private", isPrivate)
+            .put("auto_init", false)
+            .apply {
+                if (description.isNotBlank()) put("description", description.trim().take(240))
+            }
+        val json = postJson("https://api.github.com/user/repos", token, payload)
+        val fullName = json.getString("full_name")
+        return GitHubRepository(
+            fullName = fullName,
+            cloneUrl = json.optString("clone_url", "https://github.com/$fullName.git"),
+            private = json.optBoolean("private", isPrivate),
+            defaultBranch = json.optString("default_branch", "main"),
+            description = if (json.isNull("description")) "" else json.optString("description"),
+            updatedAt = json.optString("updated_at"),
+        )
+    }
+
     private fun postForm(endpoint: String, values: Map<String, String>): JSONObject {
         val body = values.entries.joinToString("&") { (key, value) ->
-            "${URLEncoder.encode(key, "UTF-8")}=${URLEncoder.encode(value, "UTF-8")}" 
+            "${URLEncoder.encode(key, "UTF-8")}=${URLEncoder.encode(value, "UTF-8")}"
         }.toByteArray()
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -114,9 +170,26 @@ class GitHubClient(private val context: Context? = null) {
             doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-            setRequestProperty("User-Agent", "PocketDev-Android")
+            setRequestProperty("User-Agent", "CS-Personal-Engine-Android")
         }
         connection.outputStream.use { it.write(body) }
+        return readResponse(connection) as JSONObject
+    }
+
+    private fun postJson(endpoint: String, token: String, payload: JSONObject): JSONObject {
+        val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            setRequestProperty("User-Agent", "CS-Personal-Engine-Android")
+        }
+        connection.outputStream.use { it.write(bytes) }
         return readResponse(connection) as JSONObject
     }
 
@@ -127,8 +200,8 @@ class GitHubClient(private val context: Context? = null) {
             readTimeout = 30_000
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
-            setRequestProperty("User-Agent", "PocketDev-Android")
+            setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            setRequestProperty("User-Agent", "CS-Personal-Engine-Android")
         }
         return readResponse(connection)
     }
@@ -138,7 +211,12 @@ class GitHubClient(private val context: Context? = null) {
         val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
             ?.bufferedReader()?.use { it.readText() }.orEmpty()
         if (status !in 200..299) {
-            val message = runCatching { JSONObject(text).optString("message") }.getOrNull()
+            val message = runCatching {
+                val root = JSONObject(text)
+                val base = root.optString("message")
+                val detail = root.optJSONArray("errors")?.optJSONObject(0)?.optString("message").orEmpty()
+                if (detail.isNotBlank() && detail != base) "$base ($detail)" else base
+            }.getOrNull()
             error(message?.takeIf(String::isNotBlank) ?: text(R.string.rt_gh_http_error, "GitHub returned HTTP $status", status))
         }
         return if (text.trimStart().startsWith("[")) JSONArray(text) else JSONObject(text)

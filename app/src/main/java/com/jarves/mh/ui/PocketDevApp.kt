@@ -112,6 +112,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Edit
@@ -460,6 +461,23 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onCancelAndroidBuild = viewModel::cancelAndroidBuild,
             onCleanAndroid = viewModel::cleanAndroidProject,
             onInstallAndroidTools = { viewModel.installDevStack(DevStack.ANDROID) },
+            onExecuteFromChat = viewModel::executeCommandFromChat,
+            onFixTerminalFailure = viewModel::fixTerminalFailureWithAi,
+            onOpenServerPort = viewModel::openDetectedServerPort,
+            onToggleLiveStreamExpanded = viewModel::toggleLiveStreamExpanded,
+            onSetAutoContextEnabled = viewModel::setAutoContextEnabled,
+            onSetAutoRunChatCommands = viewModel::setAutoRunChatCommands,
+            onRefreshGitStatus = viewModel::refreshGitStatus,
+            onSaveGitHubPat = viewModel::saveGitHubPat,
+            onClearGitHubPat = viewModel::clearGitHubPat,
+            onStartGitHubOAuth = viewModel::startGitHubLogin,
+            onGitInitRepo = viewModel::gitInitRepo,
+            onGitCommitAndPush = viewModel::gitCommitAndPush,
+            onGitPull = viewModel::gitPull,
+            onGitCheckoutBranch = viewModel::gitCheckoutBranch,
+            onGitSetRemoteUrl = viewModel::gitSetRemoteUrl,
+            onGitCreateRepoAndPush = viewModel::gitCreateRepoAndPush,
+            onGitAutoCommitMsg = viewModel::gitAutoGenerateCommitMessage,
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -2569,6 +2587,11 @@ private fun RootScreenHost(
                     onRefreshDiagnostics = viewModel::refreshDeveloperDiagnostics,
                     onStopInactiveProcesses = viewModel::stopInactiveDeveloperProcesses,
                     onClearRuntimeCache = viewModel::clearDeveloperRuntimeCache,
+                    onSetAutoContextEnabled = viewModel::setAutoContextEnabled,
+                    onSetAutoRunChatCommands = viewModel::setAutoRunChatCommands,
+                    onSaveCustomSystemInstructions = viewModel::saveCustomSystemInstructions,
+                    onSaveGitHubPat = viewModel::saveGitHubPat,
+                    onClearGitHubPat = viewModel::clearGitHubPat,
                 )
             }
         }
@@ -3010,6 +3033,7 @@ private fun providerTitleResource(provider: ProviderKind): Int = when (provider)
     ProviderKind.KIMI -> R.string.provider_title_kimi
     ProviderKind.OPENCODE_ZEN -> R.string.provider_title_opencode
     ProviderKind.NVIDIA_NIM -> R.string.provider_title_nvidia
+    ProviderKind.OPENAI_CUSTOM -> R.string.provider_title_openai_custom
     ProviderKind.CUSTOM -> R.string.provider_title_custom
 }
 
@@ -3019,7 +3043,9 @@ private fun providerSubtitleResource(provider: ProviderKind): Int = when (provid
     ProviderKind.ANTHROPIC -> R.string.provider_subtitle_anthropic
     ProviderKind.LLM_ROUTER -> R.string.provider_subtitle_openrouter
     ProviderKind.DEEPSEEK -> R.string.provider_subtitle_deepseek
-    ProviderKind.KIMI, ProviderKind.CUSTOM -> R.string.provider_subtitle_anthropic_compatible
+    ProviderKind.KIMI -> R.string.provider_subtitle_anthropic_compatible
+    ProviderKind.OPENAI_CUSTOM -> R.string.provider_subtitle_openai_custom
+    ProviderKind.CUSTOM -> R.string.provider_subtitle_custom_universal
     ProviderKind.OPENCODE_ZEN -> R.string.provider_subtitle_opencode
     ProviderKind.NVIDIA_NIM -> R.string.provider_subtitle_nvidia
 }
@@ -3038,6 +3064,7 @@ private fun ProviderChoiceRow(
         ProviderKind.KIMI -> Color(0xFF8B7CF6)
         ProviderKind.OPENCODE_ZEN -> Color(0xFF22C55E)
         ProviderKind.NVIDIA_NIM -> Color(0xFF76B900)
+        ProviderKind.OPENAI_CUSTOM -> Color(0xFF10A37F)
         ProviderKind.CUSTOM -> PocketOrange
     }
     val mark = when (provider) {
@@ -3048,6 +3075,7 @@ private fun ProviderChoiceRow(
         ProviderKind.KIMI -> "K"
         ProviderKind.OPENCODE_ZEN -> "Z"
         ProviderKind.NVIDIA_NIM -> "NV"
+        ProviderKind.OPENAI_CUSTOM -> "OA"
         ProviderKind.CUSTOM -> "<>"
     }
 
@@ -4395,7 +4423,25 @@ private fun WorkspaceScreen(
     onCancelAndroidBuild: () -> Unit,
     onCleanAndroid: () -> Unit,
     onInstallAndroidTools: () -> Unit,
+    onExecuteFromChat: (String) -> Unit = {},
+    onFixTerminalFailure: (String, String, Int) -> Unit = { _, _, _ -> },
+    onOpenServerPort: (Int) -> Unit = {},
+    onToggleLiveStreamExpanded: () -> Unit = {},
+    onSetAutoContextEnabled: (Boolean) -> Unit = {},
+    onSetAutoRunChatCommands: (Boolean) -> Unit = {},
+    onRefreshGitStatus: () -> Unit = {},
+    onSaveGitHubPat: (String, String, String) -> Unit = { _, _, _ -> },
+    onClearGitHubPat: () -> Unit = {},
+    onStartGitHubOAuth: () -> Unit = {},
+    onGitInitRepo: () -> Unit = {},
+    onGitCommitAndPush: (String, Boolean) -> Unit = { _, _ -> },
+    onGitPull: () -> Unit = {},
+    onGitCheckoutBranch: (String, Boolean) -> Unit = { _, _ -> },
+    onGitSetRemoteUrl: (String) -> Unit = {},
+    onGitCreateRepoAndPush: (String, String, Boolean, String) -> Unit = { _, _, _, _ -> },
+    onGitAutoCommitMsg: () -> String = { "" },
 ) {
+    var showGitStudio by rememberSaveable { mutableStateOf(false) }
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
@@ -4558,6 +4604,32 @@ private fun WorkspaceScreen(
         return
     }
 
+    if (showGitStudio) {
+        GitControlStudioSheet(
+            projectName = state.activeProject?.name.orEmpty(),
+            projectSlug = state.activeProject?.slug ?: "project",
+            gitStatus = state.gitStatus,
+            isBusy = state.gitBusy,
+            feedbackMessage = state.gitFeedbackMessage,
+            gitHubLogin = state.githubLogin.orEmpty(),
+            hasGitHubPat = state.hasGitHubPat,
+            gitAuthorName = state.githubAuthorName,
+            gitAuthorEmail = state.githubAuthorEmail,
+            onDismiss = { showGitStudio = false },
+            onRefresh = onRefreshGitStatus,
+            onSaveGitHubPat = onSaveGitHubPat,
+            onClearGitHubPat = onClearGitHubPat,
+            onStartOAuthLogin = onStartGitHubOAuth,
+            onInitRepo = onGitInitRepo,
+            onCommitAndPush = onGitCommitAndPush,
+            onPull = onGitPull,
+            onCheckoutBranch = onGitCheckoutBranch,
+            onSetRemoteUrl = onGitSetRemoteUrl,
+            onCreateRepoAndPush = onGitCreateRepoAndPush,
+            onAutoGenerateCommitMsg = onGitAutoCommitMsg,
+        )
+    }
+
     if (showChats) {
         ChatSwitcherDialog(
             chats = state.projectChats,
@@ -4627,6 +4699,39 @@ private fun WorkspaceScreen(
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects)) } },
                 actions = {
+                    Surface(
+                        modifier = Modifier
+                            .padding(end = 4.dp)
+                            .enginePressScale {
+                                onRefreshGitStatus()
+                                showGitStudio = true
+                            },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.CloudUpload,
+                                contentDescription = "Git & GitHub Push",
+                                modifier = Modifier.size(15.dp),
+                                tint = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     if (isAndroidProject) {
                         IconButton(
                             onClick = { showAndroidBuild = true },
@@ -4637,7 +4742,9 @@ private fun WorkspaceScreen(
                         }
                     }
                     IconButton(onClick = { showChats = true }) { Icon(Icons.Default.History, stringResource(R.string.ws_project_chats)) }
-                    if (state.isRunning) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
+                    if (state.isRunning) {
+                        AnimatedEngineOrb(isRunning = true, size = 22.dp, modifier = Modifier.padding(horizontal = 8.dp))
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
@@ -4697,12 +4804,28 @@ private fun WorkspaceScreen(
                     onOpenAttachment = onOpenAttachment,
                     onRunInTerminal = { command ->
                         selectedTab = WorkspaceTab.TERMINAL
-                        onTerminalOpened()
-                        onTerminalPrepare(command)
+                        onExecuteFromChat(command)
                     },
                     queuedFollowUps = state.queuedFollowUps,
                     onSteerFollowUp = onSteerFollowUp,
                     onRemoveFollowUp = onRemoveFollowUp,
+                    activeToolSummary = state.activeToolHeadline,
+                    streamingPreview = state.streamingAssistantPreview,
+                    liveStreamExpanded = state.liveStreamExpanded,
+                    onToggleLiveStreamExpanded = onToggleLiveStreamExpanded,
+                    autoContextEnabled = state.autoContextEnabled,
+                    onToggleAutoContext = onSetAutoContextEnabled,
+                    autoRunCommands = state.autoRunChatCommands,
+                    onToggleAutoRunCommands = onSetAutoRunChatCommands,
+                    detectedServerPorts = state.detectedServerPorts,
+                    onOpenServerPort = { port ->
+                        onOpenServerPort(port)
+                        selectedTab = WorkspaceTab.PREVIEW
+                    },
+                    onOpenTerminalTab = {
+                        selectedTab = WorkspaceTab.TERMINAL
+                        onTerminalOpened()
+                    },
                 )
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
@@ -4761,6 +4884,10 @@ private fun WorkspaceScreen(
                     onCommandDraftConsumed = onTerminalDraftConsumed,
                     promptPath = state.projectTerminalCwd,
                     onStop = onTerminalStop,
+                    onFixWithAi = { cmd, out, code ->
+                        selectedTab = WorkspaceTab.CHAT
+                        onFixTerminalFailure(cmd, out, code)
+                    },
                     showThemeAction = false,
                     showQuickCommands = false,
                     compactHeader = true,
@@ -6201,6 +6328,17 @@ private fun ChatTab(
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
+    activeToolSummary: String? = null,
+    streamingPreview: String? = null,
+    liveStreamExpanded: Boolean = true,
+    onToggleLiveStreamExpanded: () -> Unit = {},
+    autoContextEnabled: Boolean = true,
+    onToggleAutoContext: (Boolean) -> Unit = {},
+    autoRunCommands: Boolean = false,
+    onToggleAutoRunCommands: (Boolean) -> Unit = {},
+    detectedServerPorts: List<Int> = emptyList(),
+    onOpenServerPort: (Int) -> Unit = {},
+    onOpenTerminalTab: () -> Unit = {},
 ) {
     val view = LocalView.current
     // Keep the screen on while the selected agent is working in this chat. Released automatically
@@ -6356,6 +6494,36 @@ private fun ChatTab(
                 }
 
                 val canSend = prompt.isNotBlank() || pendingAttachments.isNotEmpty()
+
+                DetectedDevServerBanner(
+                    ports = detectedServerPorts,
+                    onOpenPort = onOpenServerPort,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+
+                SlashCommandPalette(
+                    query = prompt,
+                    onSelect = { slashCmd ->
+                        prompt = ""
+                        onSend(slashCmd.expandedPrompt)
+                    },
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+
+                LiveEngineTelemetryHud(
+                    isRunning = isRunning,
+                    statusMessage = if (thinkingActive) "Reasoning & planning…" else "Streaming live output…",
+                    activeToolSummary = activeToolSummary,
+                    streamingPreview = streamingPreview,
+                    expanded = liveStreamExpanded,
+                    onToggleExpanded = onToggleLiveStreamExpanded,
+                    autoContextEnabled = autoContextEnabled,
+                    onToggleAutoContext = onToggleAutoContext,
+                    autoRunCommands = autoRunCommands,
+                    onToggleAutoRunCommands = onToggleAutoRunCommands,
+                    onOpenTerminal = onOpenTerminalTab,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
 
                 Surface(
                     shape = RoundedCornerShape(26.dp),
@@ -6588,16 +6756,18 @@ private fun ClaudeActivityDisclosure(
             if (0 in expandedItems) ActivityExpandedDetail(null, stringResource(R.string.ws_activity_reviewing_request))
         } else {
             visibleItems.forEachIndexed { index, item ->
+                val autoLiveExpanded = isRunning && index == visibleItems.lastIndex && !item.isComplete
+                val itemExpanded = (index in expandedItems) || autoLiveExpanded
                 ActivitySummaryRow(
                     item = item,
                     text = compactActivityText(item),
-                    expanded = index in expandedItems,
+                    expanded = itemExpanded,
                     showProgress = isRunning && !item.isComplete,
                     onToggle = {
                         expandedItems = if (index in expandedItems) expandedItems - index else expandedItems + index
                     },
                 )
-                if (index in expandedItems) ActivityExpandedDetail(item, activityDetail(item))
+                if (itemExpanded) ActivityExpandedDetail(item, activityDetail(item))
             }
         }
     }
@@ -7349,30 +7519,36 @@ private fun EmptyState(icon: ImageVector, title: String, body: String) {
 
 @Composable
 private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
-    val size = if (compact) 32.dp else 50.dp
-    val iconSize = if (compact) 17.dp else 24.dp
-    val cornerRadius = if (compact) 9.dp else 14.dp
+    val size = if (compact) 34.dp else 52.dp
+    val cornerRadius = if (compact) 10.dp else 15.dp
     val primary = MaterialTheme.colorScheme.primary
 
     Box(
         modifier = modifier
             .size(size)
             .background(
-                color = primary.copy(alpha = 0.12f),
+                brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                    listOf(
+                        Color(0xFF141821),
+                        Color(0xFF0A0C10),
+                    ),
+                ),
                 shape = RoundedCornerShape(cornerRadius),
             )
             .border(
                 width = 1.dp,
-                color = primary.copy(alpha = 0.32f),
+                color = primary.copy(alpha = 0.45f),
                 shape = RoundedCornerShape(cornerRadius),
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = Icons.Default.Terminal,
-            contentDescription = "Mobile Harness",
-            modifier = Modifier.size(iconSize),
-            tint = primary,
+        Text(
+            text = "CS",
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = if (compact) 13.sp else 18.sp,
+            letterSpacing = (-0.5).sp,
+            color = primary,
         )
     }
 }

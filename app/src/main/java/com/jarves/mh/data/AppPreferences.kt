@@ -68,6 +68,34 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("github_login", "") ?: ""
         set(value) { preferences.edit().putString("github_login", value).apply() }
 
+    var githubName: String
+        get() = preferences.getString("github_name", "") ?: ""
+        set(value) { preferences.edit().putString("github_name", value).apply() }
+
+    var githubEmail: String
+        get() = preferences.getString("github_email", "") ?: ""
+        set(value) { preferences.edit().putString("github_email", value).apply() }
+
+    /** Injects live open-file, terminal, git status & build errors into agent prompts. */
+    var autoContextEnabled: Boolean
+        get() = preferences.getBoolean("cs_auto_context_enabled", true)
+        set(value) { preferences.edit().putBoolean("cs_auto_context_enabled", value).apply() }
+
+    /** Automatically runs safe shell blocks emitted in assistant replies when enabled. */
+    var autoRunChatCommands: Boolean
+        get() = preferences.getBoolean("cs_auto_run_chat_commands", false)
+        set(value) { preferences.edit().putBoolean("cs_auto_run_chat_commands", value).apply() }
+
+    /** Keeps the real-time live engine stream card expanded while the agent writes/runs commands. */
+    var liveStreamExpanded: Boolean
+        get() = preferences.getBoolean("cs_live_stream_expanded", true)
+        set(value) { preferences.edit().putBoolean("cs_live_stream_expanded", value).apply() }
+
+    /** User-defined personal instructions injected into every agent session. */
+    var customSystemInstructions: String
+        get() = preferences.getString("cs_custom_system_instructions", "") ?: ""
+        set(value) { preferences.edit().putString("cs_custom_system_instructions", value).apply() }
+
     fun saveAgentConversation(agent: AgentKind, projectId: String, chatId: String, conversationId: String?) {
         val key = agentConversationKey(agent, projectId, chatId)
         preferences.edit().apply {
@@ -153,6 +181,7 @@ class AppPreferences(private val context: Context) {
             .putString("provider_dsh_api", profile.dshApi)
             .putString("provider_openrouter_order", profile.openRouterProviderOrder)
             .putBoolean("provider_openrouter_allow_fallbacks", profile.openRouterAllowFallbacks)
+            .putString("provider_custom_headers", profile.customHeaders)
         if (agent != null) {
             val prefix = providerPrefix(agent)
             editor
@@ -162,6 +191,7 @@ class AppPreferences(private val context: Context) {
                 .putString("${prefix}dsh_api", profile.dshApi)
                 .putString("${prefix}openrouter_order", profile.openRouterProviderOrder)
                 .putBoolean("${prefix}openrouter_allow_fallbacks", profile.openRouterAllowFallbacks)
+                .putString("${prefix}custom_headers", profile.customHeaders)
         }
         editor.apply()
     }
@@ -236,6 +266,11 @@ class AppPreferences(private val context: Context) {
                 preferences.getBoolean("${sourcePrefix}openrouter_allow_fallbacks", true)
             } else {
                 true
+            },
+            customHeaders = if (useStoredValues) {
+                preferences.getString("${sourcePrefix}custom_headers", "").orEmpty()
+            } else {
+                ""
             },
         )
     }
