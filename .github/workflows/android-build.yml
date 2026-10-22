@@ -158,7 +158,7 @@ jobs:
       - name: Collect & Checksum APK Deliverables
         run: |
           mkdir -p dist/apks
-          VERSION_TAG="${GITHUB_REF_NAME:-v2.0.0}"
+          VERSION_TAG="${GITHUB_REF_NAME:-v4.0.0}"
           cp app/build/outputs/apk/online/release/app-online-release.apk \
             "dist/apks/CS-Personal-Engine-${VERSION_TAG}-arm64-online-release.apk"
           cp app/build/outputs/apk/online/debug/app-online-debug.apk \
@@ -174,9 +174,9 @@ jobs:
             DL_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION_TAG}/CS-Personal-Engine-${VERSION_TAG}-arm64-online-release.apk"
             cat > dist/apks/cs-personal-engine-update.json <<JSON
           {
-            "versionCode": 20,
+            "versionCode": 40,
             "versionName": "${VERSION_TAG#v}",
-            "notes": "CS Personal Engine ${VERSION_TAG} release build.",
+            "notes": "CS Personal Engine ${VERSION_TAG}: Full-screen Termux VT100 terminal, Dark-Grey/Black Antigravity Mobile IDE, live +added/-removed code diff deck, and zero-polling 120Hz PTY speed.",
             "artifacts": {
               "online": {
                 "url": "${DL_URL}",

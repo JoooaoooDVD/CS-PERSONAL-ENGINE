@@ -1,27 +1,32 @@
 package com.jarves.mh.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,70 +34,77 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.jarves.mh.R
+import com.jarves.mh.runtime.TerminalScreenSnapshot
 import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.EngineCyan
 import com.jarves.mh.ui.theme.EngineEmerald
-import com.jarves.mh.ui.theme.PocketGreen
-import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+data class TerminalSessionTabUi(
+    val id: String,
+    val title: String,
+    val alive: Boolean = true,
+)
+
+/**
+ * Sentinel character kept at index 0 of the invisible Android IME input sink so soft-keyboard
+ * Backspace (`DEL`) ALWAYS fires `onValueChange` even at the start of an empty prompt!
+ */
+private const val IME_SENTINEL = "\u200B"
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TerminalScreen(
     lines: List<TerminalOutputLine>,
@@ -103,8 +115,8 @@ fun TerminalScreen(
     onClear: () -> Unit,
     onToggleTheme: () -> Unit,
     themeMode: AppThemeMode,
-    title: String = stringResource(R.string.ws_terminal_linux_title),
-    subtitle: String = stringResource(R.string.ws_terminal_linux_subtitle),
+    title: String = "Linux Shell",
+    subtitle: String = "/workspace",
     liveOutput: String = "",
     currentCommand: String? = null,
     commandDraft: String? = null,
@@ -115,574 +127,554 @@ fun TerminalScreen(
     showThemeAction: Boolean = false,
     showQuickCommands: Boolean = true,
     compactHeader: Boolean = false,
-    interactivePtyMode: Boolean = false,
+    interactivePtyMode: Boolean = true,
     onTogglePtyMode: ((Boolean) -> Unit)? = null,
     ptyBuffer: String = "",
+    ptySnapshot: TerminalScreenSnapshot? = null,
     ptyAlive: Boolean = false,
+    sessionTabs: List<TerminalSessionTabUi> = emptyList(),
+    activeSessionTabId: String = "",
+    onSelectSessionTab: ((String) -> Unit)? = null,
+    onNewSessionTab: (() -> Unit)? = null,
+    onCloseSessionTab: ((String) -> Unit)? = null,
     onEnsurePtyStarted: (() -> Unit)? = null,
     onSendPtyCommand: ((String) -> Unit)? = null,
     onSendPtyRaw: ((String) -> Unit)? = null,
+    onPastePty: ((String) -> Unit)? = null,
+    onResizePty: ((Int, Int) -> Unit)? = null,
     onInterruptPty: (() -> Unit)? = null,
     onClearPty: (() -> Unit)? = null,
     onRestartPty: (() -> Unit)? = null,
     onOpenCliHub: (() -> Unit)? = null,
+    onCloseFullScreen: (() -> Unit)? = null,
+    isImmersiveFullScreen: Boolean = false,
+    onToggleImmersiveFullScreen: (() -> Unit)? = null,
 ) {
-    var commandInput by remember { mutableStateOf(TextFieldValue()) }
-    var commandHistory by remember { mutableStateOf(emptyList<String>()) }
-    var historyIndex by remember { mutableStateOf(-1) }
-    var ctrlActive by rememberSaveable { mutableStateOf(false) }
-    val terminalScrollState = rememberScrollState()
-    val inputFocusRequester = remember { FocusRequester() }
+    val clipboard = LocalClipboardManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
-    val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}"
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
 
-    val usePty = interactivePtyMode && onSendPtyCommand != null
+    var fontSizeSp by rememberSaveable { mutableFloatStateOf(12.5f) }
+    var ctrlSticky by rememberSaveable { mutableStateOf(false) }
+    var altSticky by rememberSaveable { mutableStateOf(false) }
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(usePty) {
-        if (usePty) onEnsurePtyStarted?.invoke()
+    // Hidden IME buffer initialized with sentinel so Backspace & Enter work 100% natively like Termux
+    var imeValue by remember {
+        mutableStateOf(TextFieldValue(IME_SENTINEL, TextRange(IME_SENTINEL.length)))
     }
 
-    val openTerminalKeyboard = {
-        inputFocusRequester.requestFocus()
+    val focusTerminal = {
+        selectionMode = false
+        focusRequester.requestFocus()
         scope.launch {
-            delay(60)
+            delay(30)
             keyboardController?.show()
         }
     }
 
-    val executeOrSend = { rawCmd: String ->
-        if (usePty) {
-            onSendPtyCommand?.invoke(rawCmd)
-        } else if (isRunning) {
-            onInput(rawCmd)
-        } else {
-            onRun(rawCmd)
-        }
-    }
-
-    val submitCommand = {
-        val submitted = commandInput.text
-        if (submitted.isNotEmpty() || usePty) {
-            executeOrSend(submitted)
-            if (submitted.isNotBlank()) {
-                commandHistory = (commandHistory + submitted).takeLast(80)
-            }
-            historyIndex = -1
-            commandInput = TextFieldValue()
-        }
+    LaunchedEffect(Unit) {
+        onEnsurePtyStarted?.invoke()
+        delay(80)
+        focusRequester.requestFocus()
     }
 
     LaunchedEffect(commandDraft) {
         if (!commandDraft.isNullOrBlank()) {
-            if (usePty) {
-                onSendPtyCommand?.invoke(commandDraft)
+            if (onSendPtyCommand != null) {
+                onSendPtyCommand(commandDraft)
             } else {
-                commandInput = TextFieldValue(commandDraft, TextRange(commandDraft.length))
+                onRun(commandDraft)
             }
-            historyIndex = -1
             onCommandDraftConsumed()
         }
     }
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { terminalScrollState.maxValue }
-            .collect { maxValue -> terminalScrollState.scrollTo(maxValue) }
+    val sendKeyBytes: (String) -> Unit = { raw ->
+        if (onSendPtyRaw != null) {
+            onSendPtyRaw(raw)
+        } else if (raw == "\r" || raw == "\n") {
+            onInput("")
+        } else {
+            onInput(raw)
+        }
     }
-    LaunchedEffect(lines.size, isRunning, ptyBuffer.length, commandInput.text.length) {
-        delay(50)
-        terminalScrollState.scrollTo(terminalScrollState.maxValue)
-    }
 
-    val quickCommands = listOf(
-        "ls -la",
-        "git status",
-        "apt-get update",
-        "node -v && npm -v",
-        "python3 --version",
-        "claude --version",
-        "agy --version",
-        "gh --version",
-        "df -h",
-    )
-
-    Scaffold(
-        modifier = if (compactHeader) Modifier else Modifier.statusBarsPadding(),
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            Column {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .background(EngineEmerald.copy(alpha = 0.14f), RoundedCornerShape(9.dp))
-                            .border(1.dp, EngineEmerald.copy(alpha = 0.38f), RoundedCornerShape(9.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Icons.Default.Terminal, contentDescription = null, tint = EngineEmerald, modifier = Modifier.size(17.dp))
+    val dispatchTypedString: (String) -> Unit = { typed ->
+        for (ch in typed) {
+            when {
+                ch == '\n' || ch == '\r' -> sendKeyBytes("\r")
+                ctrlSticky -> {
+                    val lower = ch.lowercaseChar()
+                    val ctrlByte = when {
+                        lower in 'a'..'z' -> (lower.code - 'a'.code + 1).toChar().toString()
+                        ch == '[' -> "\u001B"
+                        ch == '\\' -> "\u001C"
+                        ch == ']' -> "\u001D"
+                        ch == '^' -> "\u001E"
+                        ch == '_' || ch == '/' -> "\u001F"
+                        else -> ch.toString()
                     }
-                    Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(title, fontWeight = FontWeight.ExtraBold, fontSize = 14.5.sp)
-                            Surface(
-                                shape = CircleShape,
-                                color = if (usePty && ptyAlive) EngineEmerald.copy(alpha = 0.16f) else EngineCyan.copy(alpha = 0.14f),
-                            ) {
-                                Text(
-                                    text = if (usePty) (if (ptyAlive) "PTY LIVE" else "PTY IDLE") else "ROOT BASH",
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = if (usePty && ptyAlive) EngineEmerald else EngineCyan,
-                                )
-                            }
-                        }
-                        Text(
-                            if (usePty) "Full Interactive Ubuntu Root PTY · Any CLI / REPL / Package" else subtitle,
-                            fontSize = 10.5.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
-
-                    if (onTogglePtyMode != null) {
-                        Surface(
-                            modifier = Modifier.clickable { onTogglePtyMode(!interactivePtyMode) },
-                            shape = RoundedCornerShape(9.dp),
-                            color = if (interactivePtyMode) EngineEmerald.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant,
-                            border = BorderStroke(1.dp, if (interactivePtyMode) EngineEmerald else MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Text(
-                                text = if (interactivePtyMode) "PTY ON" else "Blocks",
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (interactivePtyMode) EngineEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-
-                    if (onOpenCliHub != null) {
-                        Surface(
-                            modifier = Modifier.clickable(onClick = onOpenCliHub),
-                            shape = RoundedCornerShape(9.dp),
-                            color = EngineCyan.copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, EngineCyan.copy(alpha = 0.45f)),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp),
-                            ) {
-                                Icon(Icons.Default.Add, null, tint = EngineCyan, modifier = Modifier.size(13.dp))
-                                Text("CLI Hub", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = EngineCyan)
-                            }
-                        }
-                    }
-
-                    if (usePty && onRestartPty != null) {
-                        IconButton(onClick = onRestartPty, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Restart PTY shell", modifier = Modifier.size(17.dp))
-                        }
-                    }
-
-                    IconButton(
-                        onClick = { if (usePty) onClearPty?.invoke() else onClear() },
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = stringResource(R.string.ws_terminal_clear_output), modifier = Modifier.size(18.dp))
-                    }
-
-                    if (showThemeAction) {
-                        IconButton(onClick = onToggleTheme, modifier = Modifier.size(32.dp)) {
-                            Icon(
-                                if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                contentDescription = stringResource(R.string.theme_toggle),
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
+                    ctrlSticky = false
+                    sendKeyBytes(ctrlByte)
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                altSticky -> {
+                    altSticky = false
+                    sendKeyBytes("\u001B$ch")
+                }
+                else -> sendKeyBytes(ch.toString())
             }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .then(if (compactHeader) Modifier else Modifier.imePadding()),
+        }
+    }
+
+    val styledLines = ptySnapshot?.styledLines.orEmpty()
+    val revision = ptySnapshot?.revision ?: ptyBuffer.length.toLong()
+
+    // Instant auto-follow bottom whenever new terminal output or keystrokes arrive
+    LaunchedEffect(revision, styledLines.size) {
+        if (!selectionMode && styledLines.isNotEmpty()) {
+            listState.scrollToItem((styledLines.size - 1).coerceAtLeast(0))
+        }
+    }
+
+    val applyStatusBarPadding = onCloseFullScreen != null || (!compactHeader && isImmersiveFullScreen)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF000000))
+            .then(if (applyStatusBarPadding) Modifier.statusBarsPadding() else Modifier)
+            .imePadding()
+            .navigationBarsPadding(),
+    ) {
+        // ── Razor-Thin 36dp Termux+ Session & Tool Strip ──
+        Surface(
+            color = Color(0xFF0B0D11),
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            if (showQuickCommands && !keyboardVisible) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    quickCommands.forEach { cmd ->
-                        AssistChip(
-                            onClick = { executeOrSend(cmd) },
-                            label = {
-                                Text(cmd, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                            },
-                        )
-                    }
-                }
-            }
-
-            val isDark = when (themeMode) {
-                AppThemeMode.DARK, AppThemeMode.AMOLED -> true
-                AppThemeMode.LIGHT -> false
-                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
-            }
-            val terminalBg = when (themeMode) {
-                AppThemeMode.AMOLED -> Color(0xFF000000)
-                else -> if (isDark) Color(0xFF05070C) else Color(0xFFF6F8FA)
-            }
-            val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
-            val commandTextColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
-            val outputTextColor = if (isDark) Color(0xFFD2DCE8) else MaterialTheme.colorScheme.onSurface
-            val emptyStateColor = if (isDark) Color(0xFF6E7681) else MaterialTheme.colorScheme.onSurfaceVariant
-            val lastFailedLine = lines.lastOrNull()?.takeIf { !usePty && !isRunning && it.exitCode != 0 }
-
-            if (lastFailedLine != null && onFixWithAi != null) {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.45f)),
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Exit code ${lastFailedLine.exitCode}",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                            Text(
-                                text = lastFailedLine.command,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f),
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        Button(
-                            onClick = { onFixWithAi(lastFailedLine.command, lastFailedLine.output, lastFailedLine.exitCode) },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(10.dp),
-                        ) {
-                            Text("⚡ Fix with AI", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-
-            // Full-Screen Linux Console Viewport
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                    .border(
-                        1.dp,
-                        if (isDark) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outlineVariant,
-                        RoundedCornerShape(14.dp),
-                    )
-                    .clickable { openTerminalKeyboard() },
-                color = terminalBg,
-                shape = RoundedCornerShape(14.dp),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(terminalScrollState)
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    SelectionContainer {
-                        if (usePty) {
-                            Text(
-                                text = ptyBuffer.ifBlank {
-                                    "CS Personal Engine · Ubuntu arm64 Full Root Interactive PTY\n" +
-                                        "Run any command or CLI: apt, npm -g, pip, uv, cargo, git, gh, codex, gemini, opencode, aider, python3, node...\n" +
-                                        "root@cs-engine:$terminalPromptPath# "
-                                },
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp,
-                                lineHeight = 17.5.sp,
-                                color = outputTextColor,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (lines.isEmpty()) {
-                                    Text(
-                                        stringResource(R.string.workspace_terminal_ready),
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 12.sp,
-                                        color = emptyStateColor,
-                                    )
-                                }
-                                lines.forEach { item ->
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        TerminalCommandPrompt(promptPath = terminalPromptPath, command = item.command, isDark = isDark)
-                                        if (item.output.isNotEmpty()) {
-                                            Text(
-                                                text = sanitizeTerminalOutput(item.output),
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 12.sp,
-                                                lineHeight = 18.sp,
-                                                color = if (item.exitCode != 0) MaterialTheme.colorScheme.error else outputTextColor,
-                                                modifier = Modifier.padding(start = 6.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                                if (isRunning && currentCommand != null) {
-                                    TerminalCommandPrompt(promptPath = terminalPromptPath, command = currentCommand, isDark = isDark)
-                                }
-                                if (liveOutput.isNotBlank()) {
-                                    Text(
-                                        sanitizeTerminalOutput(liveOutput),
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 12.sp,
-                                        lineHeight = 18.sp,
-                                        color = outputTextColor,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                }
-            }
-
-            // Hardware Control Strip — ALWAYS visible (even with keyboard up) for interactive CLIs!
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 10.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    .height(38.dp)
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                TerminalKeyButton("TAB", "Tab complete") {
-                    if (usePty) {
-                        onSendPtyRaw?.invoke(commandInput.text + "\t")
-                        commandInput = TextFieldValue()
-                    } else {
-                        commandInput = commandInput.copy(text = commandInput.text + "  ", selection = TextRange(commandInput.text.length + 2))
+                if (onCloseFullScreen != null) {
+                    IconButton(onClick = onCloseFullScreen, modifier = Modifier.size(30.dp)) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color(0xFFE2E8F0),
+                            modifier = Modifier.size(17.dp),
+                        )
                     }
                 }
-                TerminalKeyButton("CTRL+C", "Interrupt / SIGINT") {
-                    if (usePty) onInterruptPty?.invoke()
-                    else if (isRunning) onInterrupt?.invoke()
-                    else commandInput = TextFieldValue()
-                }
-                TerminalKeyButton("CTRL+D", "EOF") {
-                    if (usePty) onSendPtyRaw?.invoke("\u0004")
-                }
-                TerminalKeyButton("ESC", "Escape") {
-                    if (usePty) onSendPtyRaw?.invoke("\u001B") else commandInput = TextFieldValue()
-                }
-                TerminalKeyButton("↑", "Previous command") {
-                    if (usePty && commandInput.text.isEmpty()) {
-                        onSendPtyRaw?.invoke("\u001B[A")
-                    } else {
-                        commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
-                            historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
-                            commandInput = TextFieldValue(it, TextRange(it.length))
-                        }
-                    }
-                }
-                TerminalKeyButton("↓", "Next command") {
-                    if (usePty && commandInput.text.isEmpty()) {
-                        onSendPtyRaw?.invoke("\u001B[B")
-                    } else if (historyIndex >= 0) {
-                        historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
-                        val next = commandHistory.getOrNull(historyIndex) ?: ""
-                        commandInput = TextFieldValue(next, TextRange(next.length))
-                    }
-                }
-                TerminalIconKeyButton(Icons.Default.ArrowBack, "Left") {
-                    if (usePty && commandInput.text.isEmpty()) onSendPtyRaw?.invoke("\u001B[D")
-                    else commandInput = commandInput.copy(selection = TextRange((commandInput.selection.start - 1).coerceAtLeast(0)))
-                }
-                TerminalIconKeyButton(Icons.Default.ArrowForward, "Right") {
-                    if (usePty && commandInput.text.isEmpty()) onSendPtyRaw?.invoke("\u001B[C")
-                    else commandInput = commandInput.copy(selection = TextRange((commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)))
-                }
-                TerminalKeyButton("y↵", "Confirm yes") {
-                    if (usePty) onSendPtyRaw?.invoke("y\n") else onInput("y")
-                }
-                TerminalKeyButton("CTRL", "Ctrl modifier", active = ctrlActive) {
-                    ctrlActive = !ctrlActive
-                    if (ctrlActive) openTerminalKeyboard()
-                }
-            }
 
-            // Dedicated Sleek Command Input Bar
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
+                // Multi-Session Shell Tabs (`1: bash`, `2: bash`, `+`)
                 Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(
-                        text = if (usePty) "#" else "$",
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 14.sp,
-                        color = promptGreen,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    BasicTextField(
-                        value = commandInput,
-                        onValueChange = { next ->
-                            if (ctrlActive && next.text.length > commandInput.text.length) {
-                                val ch = next.text.last().lowercaseChar()
-                                when (ch) {
-                                    'c' -> if (usePty) onInterruptPty?.invoke() else onInterrupt?.invoke()
-                                    'd' -> if (usePty) onSendPtyRaw?.invoke("\u0004")
-                                    'z' -> if (usePty) onSendPtyRaw?.invoke("\u001A")
-                                    'l' -> if (usePty) onClearPty?.invoke() else onClear()
+                    if (sessionTabs.isNotEmpty() && onSelectSessionTab != null) {
+                        sessionTabs.forEachIndexed { idx, tab ->
+                            val active = tab.id == activeSessionTabId
+                            Surface(
+                                shape = RoundedCornerShape(7.dp),
+                                color = if (active) Color(0xFF1A1F29) else Color(0xFF101319),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (active) EngineEmerald.copy(alpha = 0.65f) else Color(0xFF1F2430),
+                                ),
+                                modifier = Modifier.combinedClickable(
+                                    onClick = { onSelectSessionTab(tab.id) },
+                                    onLongClick = { if (sessionTabs.size > 1) onCloseSessionTab?.invoke(tab.id) },
+                                ),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .background(if (tab.alive) EngineEmerald else Color(0xFF64748B), CircleShape),
+                                    )
+                                    Text(
+                                        text = "${idx + 1}: ${tab.title}",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (active) Color(0xFFF8FAFC) else Color(0xFF94A3B8),
+                                    )
+                                    if (sessionTabs.size > 1 && onCloseSessionTab != null) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Close session",
+                                            tint = Color(0xFF94A3B8),
+                                            modifier = Modifier
+                                                .size(12.dp)
+                                                .clickable { onCloseSessionTab(tab.id) },
+                                        )
+                                    }
                                 }
-                                ctrlActive = false
-                            } else {
-                                commandInput = next
                             }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .focusRequester(inputFocusRequester),
-                        singleLine = true,
-                        cursorBrush = SolidColor(promptGreen),
-                        textStyle = androidx.compose.ui.text.TextStyle(
+                        }
+                        if (onNewSessionTab != null) {
+                            Surface(
+                                onClick = onNewSessionTab,
+                                shape = RoundedCornerShape(7.dp),
+                                color = Color(0xFF12161E),
+                                border = BorderStroke(1.dp, Color(0xFF232936)),
+                            ) {
+                                Box(modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Add, contentDescription = "New shell tab", tint = EngineEmerald, modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .background(if (ptyAlive) EngineEmerald else Color(0xFF64748B), CircleShape),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = ptySnapshot?.windowTitle?.takeIf { it.isNotBlank() } ?: "$title · $promptPath",
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = commandTextColor,
-                        ),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(
-                            onSend = { submitCommand() },
-                            onDone = { submitCommand() },
-                            onGo = { submitCommand() },
-                        ),
-                        decorationBox = { inner ->
-                            if (commandInput.text.isEmpty()) {
-                                Text(
-                                    text = "Run any Linux command or CLI (apt, npm -g, pip, codex, gemini, gh…)",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.5.sp,
-                                    color = emptyStateColor,
-                                    maxLines = 1,
-                                )
-                            }
-                            inner()
-                        },
-                    )
-                    IconButton(
-                        onClick = { submitCommand() },
-                        modifier = Modifier.size(30.dp),
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFE2E8F0),
+                            maxLines = 1,
+                        )
+                    }
+                }
+
+                // Font Zoom A- / A+
+                Text(
+                    text = "A-",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF94A3B8),
+                    modifier = Modifier
+                        .clickable { fontSizeSp = (fontSizeSp - 1f).coerceIn(9f, 20f) }
+                        .padding(horizontal = 5.dp, vertical = 4.dp),
+                )
+                Text(
+                    text = "A+",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF94A3B8),
+                    modifier = Modifier
+                        .clickable { fontSizeSp = (fontSizeSp + 1f).coerceIn(9f, 20f) }
+                        .padding(horizontal = 5.dp, vertical = 4.dp),
+                )
+
+                if (onOpenCliHub != null) {
+                    Surface(
+                        onClick = onOpenCliHub,
+                        shape = RoundedCornerShape(6.dp),
+                        color = EngineCyan.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, EngineCyan.copy(alpha = 0.4f)),
                     ) {
+                        Text(
+                            text = "+CLI",
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = EngineCyan,
+                        )
+                    }
+                }
+
+                // Copy / Select toggle
+                IconButton(
+                    onClick = {
+                        val copyText = ptySnapshot?.plainText?.ifBlank { ptyBuffer } ?: ptyBuffer
+                        if (copyText.isNotBlank()) {
+                            clipboard.setText(AnnotatedString(copyText))
+                        }
+                        selectionMode = !selectionMode
+                    },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Copy terminal output",
+                        tint = if (selectionMode) EngineCyan else Color(0xFF94A3B8),
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+
+                if (onRestartPty != null) {
+                    IconButton(onClick = onRestartPty, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reset PTY", tint = Color(0xFF94A3B8), modifier = Modifier.size(15.dp))
+                    }
+                }
+
+                if (onToggleImmersiveFullScreen != null) {
+                    IconButton(onClick = onToggleImmersiveFullScreen, modifier = Modifier.size(28.dp)) {
                         Icon(
-                            Icons.Default.Send,
-                            contentDescription = "Execute command",
-                            tint = promptGreen,
+                            if (isImmersiveFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                            contentDescription = "Toggle full screen terminal",
+                            tint = if (isImmersiveFullScreen) EngineEmerald else Color(0xFF94A3B8),
                             modifier = Modifier.size(17.dp),
                         )
                     }
                 }
             }
         }
-    }
-}
+        HorizontalDivider(color = Color(0xFF1A1E26), thickness = 0.5.dp)
 
-@Composable
-private fun TerminalKeyButton(
-    label: String,
-    description: String,
-    active: Boolean = false,
-    onClick: () -> Unit,
-) {
-    OutlinedButton(
-        onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 0.dp),
-        modifier = Modifier.height(30.dp),
-        shape = RoundedCornerShape(8.dp),
-        colors = ButtonDefaults.outlinedButtonColors(
-            containerColor = if (active) PocketOrange.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surface,
-            contentColor = if (active) PocketOrange else MaterialTheme.colorScheme.onSurface,
-        ),
-        border = BorderStroke(
-            1.dp,
-            if (active) PocketOrange else MaterialTheme.colorScheme.outlineVariant,
-        ),
-    ) {
-        Text(
-            if (active) "$label ✓" else label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
-    }
-}
+        // ── 100% Edge-to-Edge Pitch-Black VT100 Terminal Screen (NO Chat Input Box!) ──
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .background(Color(0xFF000000))
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, _, zoom, _ ->
+                        if (zoom != 1f) {
+                            fontSizeSp = (fontSizeSp * zoom).coerceIn(9f, 20f)
+                        }
+                    }
+                }
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = { focusTerminal() },
+                ),
+        ) {
+            // Dynamically compute exact VT100 rows x cols from viewport pixel size & monospace glyph metrics!
+            val charWidthPx = with(density) { (fontSizeSp * 0.61f).sp.toPx() }.coerceAtLeast(4f)
+            val lineHeightSp = fontSizeSp * 1.32f
+            val lineHeightPx = with(density) { lineHeightSp.sp.toPx() }.coerceAtLeast(8f)
+            val computedCols = ((constraints.maxWidth - with(density) { 12.dp.toPx() }) / charWidthPx).toInt().coerceIn(28, 220)
+            val computedRows = ((constraints.maxHeight - with(density) { 8.dp.toPx() }) / lineHeightPx).toInt().coerceIn(12, 140)
 
-@Composable
-private fun TerminalIconKeyButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(30.dp)) {
-        Icon(icon, contentDescription = description, modifier = Modifier.size(16.dp))
-    }
-}
-
-@Composable
-private fun TerminalCommandPrompt(promptPath: String, command: String, isDark: Boolean = true) {
-    val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
-    val commandColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
-    val promptText = remember(promptPath, command, isDark) {
-        buildAnnotatedString {
-            withStyle(SpanStyle(color = promptGreen, fontWeight = FontWeight.Bold)) {
-                append("root@cs-engine:$promptPath# ")
+            LaunchedEffect(computedRows, computedCols, activeSessionTabId) {
+                onResizePty?.invoke(computedRows, computedCols)
             }
-            withStyle(SpanStyle(color = commandColor, fontWeight = FontWeight.SemiBold)) {
-                append(command)
+
+            // Invisible 1dp Direct Keystroke Sink — sends every character, Backspace & Enter IMMEDIATELY to PTY!
+            BasicTextField(
+                value = imeValue,
+                onValueChange = { next ->
+                    val currentText = next.text
+                    when {
+                        currentText.isEmpty() -> {
+                            // Sentinel was deleted -> user pressed Backspace!
+                            sendKeyBytes("\u007F")
+                        }
+                        currentText.startsWith(IME_SENTINEL) -> {
+                            val added = currentText.substring(IME_SENTINEL.length)
+                            if (added.isNotEmpty()) dispatchTypedString(added)
+                        }
+                        else -> {
+                            dispatchTypedString(currentText.replace(IME_SENTINEL, ""))
+                        }
+                    }
+                    imeValue = TextFieldValue(IME_SENTINEL, TextRange(IME_SENTINEL.length))
+                },
+                modifier = Modifier
+                    .size(1.dp)
+                    .alpha(0f)
+                    .focusRequester(focusRequester)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.Enter, Key.NumPadEnter -> { sendKeyBytes("\r"); true }
+                            Key.Backspace -> { sendKeyBytes("\u007F"); true }
+                            Key.Delete -> { sendKeyBytes("\u001B[3~"); true }
+                            Key.Tab -> { sendKeyBytes("\t"); true }
+                            Key.Escape -> { sendKeyBytes("\u001B"); true }
+                            Key.DirectionUp -> { sendKeyBytes("\u001B[A"); true }
+                            Key.DirectionDown -> { sendKeyBytes("\u001B[B"); true }
+                            Key.DirectionRight -> { sendKeyBytes("\u001B[C"); true }
+                            Key.DirectionLeft -> { sendKeyBytes("\u001B[D"); true }
+                            Key.MoveHome -> { sendKeyBytes("\u001B[H"); true }
+                            Key.MoveEnd -> { sendKeyBytes("\u001B[F"); true }
+                            Key.PageUp -> { sendKeyBytes("\u001B[5~"); true }
+                            Key.PageDown -> { sendKeyBytes("\u001B[6~"); true }
+                            else -> false
+                        }
+                    },
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrectEnabled = false,
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.None,
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = { sendKeyBytes("\r") },
+                    onGo = { sendKeyBytes("\r") },
+                    onSend = { sendKeyBytes("\r") },
+                    onNext = { sendKeyBytes("\t") },
+                ),
+                cursorBrush = SolidColor(Color.Transparent),
+            )
+
+            if (selectionMode) {
+                // Full-text copy/select overlay when user taps Copy icon
+                SelectionContainer(modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp)) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        itemsIndexed(styledLines) { _, line ->
+                            Text(
+                                text = line,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = fontSizeSp.sp,
+                                lineHeight = lineHeightSp.sp,
+                                softWrap = true,
+                            )
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                ) {
+                    if (styledLines.isEmpty()) {
+                        item {
+                            Text(
+                                text = ptyBuffer.ifBlank { "root@cs-engine:~# █" },
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = fontSizeSp.sp,
+                                lineHeight = lineHeightSp.sp,
+                                color = Color(0xFF34D399),
+                            )
+                        }
+                    } else {
+                        itemsIndexed(styledLines) { _, line ->
+                            Text(
+                                text = line,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = fontSizeSp.sp,
+                                lineHeight = lineHeightSp.sp,
+                                softWrap = false,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Authentic Termux 2-Row Extra-Keys Matrix Bar (Direct Keystrokes!) ──
+        HorizontalDivider(color = Color(0xFF1A1E26), thickness = 0.5.dp)
+        Surface(
+            color = Color(0xFF0B0D11),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 3.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                // Row 1: ESC  /  -  |  HOME  UP  END  PGUP  ^C
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    TermuxMatrixKey("ESC", Modifier.weight(1f)) { sendKeyBytes("\u001B"); focusTerminal() }
+                    TermuxMatrixKey("/", Modifier.weight(1f)) { sendKeyBytes("/"); focusTerminal() }
+                    TermuxMatrixKey("-", Modifier.weight(1f)) { sendKeyBytes("-"); focusTerminal() }
+                    TermuxMatrixKey("|", Modifier.weight(1f)) { sendKeyBytes("|"); focusTerminal() }
+                    TermuxMatrixKey("HOME", Modifier.weight(1.1f)) { sendKeyBytes("\u001B[H"); focusTerminal() }
+                    TermuxMatrixKey("▲", Modifier.weight(1f)) { sendKeyBytes("\u001B[A"); focusTerminal() }
+                    TermuxMatrixKey("END", Modifier.weight(1.1f)) { sendKeyBytes("\u001B[F"); focusTerminal() }
+                    TermuxMatrixKey("PGUP", Modifier.weight(1.1f)) { sendKeyBytes("\u001B[5~"); focusTerminal() }
+                    TermuxMatrixKey("^C", Modifier.weight(1f), danger = true) {
+                        onInterruptPty?.invoke() ?: onInterrupt?.invoke()
+                        focusTerminal()
+                    }
+                }
+                // Row 2: TAB  CTRL  ALT  ~  LEFT  DOWN  RIGHT  PGDN  PASTE
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    TermuxMatrixKey("TAB", Modifier.weight(1f)) { sendKeyBytes("\t"); focusTerminal() }
+                    TermuxMatrixKey("CTRL", Modifier.weight(1.1f), active = ctrlSticky) {
+                        ctrlSticky = !ctrlSticky
+                        focusTerminal()
+                    }
+                    TermuxMatrixKey("ALT", Modifier.weight(1.1f), active = altSticky) {
+                        altSticky = !altSticky
+                        focusTerminal()
+                    }
+                    TermuxMatrixKey("~", Modifier.weight(0.9f)) { sendKeyBytes("~"); focusTerminal() }
+                    TermuxMatrixKey("◀", Modifier.weight(1f)) { sendKeyBytes("\u001B[D"); focusTerminal() }
+                    TermuxMatrixKey("▼", Modifier.weight(1f)) { sendKeyBytes("\u001B[B"); focusTerminal() }
+                    TermuxMatrixKey("▶", Modifier.weight(1f)) { sendKeyBytes("\u001B[C"); focusTerminal() }
+                    TermuxMatrixKey("PGDN", Modifier.weight(1.1f)) { sendKeyBytes("\u001B[6~"); focusTerminal() }
+                    TermuxMatrixKey("PASTE", Modifier.weight(1.2f)) {
+                        val clip = clipboard.getText()?.text.orEmpty()
+                        if (clip.isNotEmpty()) {
+                            if (onPastePty != null) onPastePty(clip) else sendKeyBytes(clip)
+                        }
+                        focusTerminal()
+                    }
+                }
             }
         }
     }
-    Text(
-        text = promptText,
-        modifier = Modifier.fillMaxWidth(),
-        fontFamily = FontFamily.Monospace,
-        fontSize = 12.sp,
-        lineHeight = 18.sp,
-        softWrap = true,
-    )
+}
+
+@Composable
+private fun TermuxMatrixKey(
+    label: String,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val bgColor = when {
+        active -> EngineEmerald.copy(alpha = 0.25f)
+        danger -> Color(0xFF281216)
+        else -> Color(0xFF151921)
+    }
+    val borderColor = when {
+        active -> EngineEmerald
+        danger -> Color(0xFF5C232C)
+        else -> Color(0xFF222834)
+    }
+    val textColor = when {
+        active -> EngineEmerald
+        danger -> Color(0xFFFF8787)
+        else -> Color(0xFFE2E8F0)
+    }
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(30.dp),
+        shape = RoundedCornerShape(5.dp),
+        color = bgColor,
+        border = BorderStroke(0.8.dp, borderColor),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = textColor,
+                maxLines = 1,
+            )
+        }
+    }
 }

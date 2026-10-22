@@ -60,6 +60,7 @@ import com.jarves.mh.runtime.ClaudeRuntimeBridge
 import com.jarves.mh.runtime.DshRuntimeBridge
 import com.jarves.mh.runtime.GitWorkspaceManager
 import com.jarves.mh.runtime.InteractivePtySession
+import com.jarves.mh.runtime.TerminalScreenSnapshot
 import com.jarves.mh.runtime.AgentRegistry
 import com.jarves.mh.runtime.AgentUpdateInfo
 import com.jarves.mh.runtime.AntigravityAuthController
@@ -428,9 +429,15 @@ data class AppUiState(
     val activeCustomProviderId: String = "",
     val savedCustomClis: List<CliToolPackage> = emptyList(),
     val ptyTerminalBuffer: String = "",
+    val ptySnapshot: TerminalScreenSnapshot? = null,
     val ptyTerminalAlive: Boolean = false,
+    val ptySessionTabs: List<TerminalSessionTabUi> = emptyList(),
+    val activePtySessionId: String = "",
     val projectPtyTerminalBuffer: String = "",
+    val projectPtySnapshot: TerminalScreenSnapshot? = null,
     val projectPtyTerminalAlive: Boolean = false,
+    val projectPtySessionTabs: List<TerminalSessionTabUi> = emptyList(),
+    val activeProjectPtySessionId: String = "",
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -457,8 +464,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dshRuntime = DshRuntimeBridge(application) { profile -> resolveProviderSecret(profile) }
     private val installer = RuntimeInstaller(application)
     private val gitManager = GitWorkspaceManager(application, installer, vault, preferences)
-    private var quickPtySession: InteractivePtySession? = null
-    private var projectPtySession: InteractivePtySession? = null
+    private val quickPtySessions = LinkedHashMap<String, InteractivePtySession>()
+    private val projectPtySessions = LinkedHashMap<String, InteractivePtySession>()
+    private var quickPtyNextIndex: Int = 1
+    private var projectPtyNextIndex: Int = 1
     private var projectPtySessionProjectId: String? = null
     private val antigravityRuntime = AntigravityRuntimeBridge(
         application,
@@ -4482,6 +4491,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _state.update { it.copy(toastMessage = str(R.string.file_saved)) }
                     invalidateFolderMetadata(project.id, listOf(opened.path))
                     refreshProjectFiles()
+                    refreshGitStatus()
                     loadOpenedFile(project, opened.path)
                 }
                 else -> _state.update {
@@ -5523,16 +5533,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
                     )
                 }
-                is RuntimeEvent.FilesChanged -> current.copy(
-                    changes = event.changes,
-                    liveThinking = false,
-                    liveProcess = if (event.paths.isEmpty()) current.liveProcess else current.liveProcess +
-                        ActivityItem(
-                            str(R.string.vm_files_changed),
-                            event.paths.take(4).joinToString(", ") + if (event.paths.size > 4) " " + str(R.string.vm_files_more, event.paths.size - 4) else "",
-                        ),
-                    workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
-                )
+                is RuntimeEvent.FilesChanged -> {
+                    val totalAdded = event.changes.sumOf { it.additions }
+                    val totalRemoved = event.changes.sumOf { it.deletions }
+                    val diffTitle = if (event.changes.isNotEmpty()) {
+                        "Code Updated · ${event.changes.size} ${if (event.changes.size == 1) "file" else "files"} (+$totalAdded -$totalRemoved)"
+                    } else {
+                        str(R.string.vm_files_changed)
+                    }
+                    val diffDetail = event.changes.take(8).joinToString("\n") { item ->
+                        "${item.path}  +${item.additions} -${item.deletions}"
+                    } + if (event.changes.size > 8) "\n+" + str(R.string.vm_files_more, event.changes.size - 8) else ""
+                    current.copy(
+                        changes = event.changes,
+                        liveThinking = false,
+                        liveProcess = if (event.changes.isEmpty()) current.liveProcess else (
+                            current.liveProcess.filterNot { it.title.startsWith("Code Updated ·") } +
+                                ActivityItem(diffTitle, diffDetail)
+                        ).takeLast(MAX_VISIBLE_WORK_ITEMS),
+                        workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
+                    )
+                }
                 is RuntimeEvent.PreviewStarted -> current.copy(
                     previewReady = true,
                     previewUrl = event.url,
@@ -5607,6 +5628,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 touchProject(projectId)
             }
             refreshProjectFiles()
+            if (event is RuntimeEvent.SessionCompleted) refreshGitStatus()
         }
         // Save every visible reasoning/tool transition, not only assistant text and
         // final results. If Android kills the process, the last displayed timeline
@@ -5784,33 +5806,92 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun ensureQuickPtyStarted() {
-        val current = quickPtySession
-        if (current != null) {
-            if (current.ensureStarted()) {
-                _state.update { it.copy(ptyTerminalAlive = true) }
-            }
-            return
+    private fun syncQuickPtyTabsUi(activeIdOverride: String? = null) {
+        val activeId = activeIdOverride ?: _state.value.activePtySessionId.takeIf { it in quickPtySessions }
+            ?: quickPtySessions.keys.firstOrNull().orEmpty()
+        val activeSession = quickPtySessions[activeId]
+        val tabs = quickPtySessions.values.map { s ->
+            TerminalSessionTabUi(id = s.sessionId, title = s.label, alive = s.alive.value)
         }
+        _state.update {
+            it.copy(
+                ptySessionTabs = tabs,
+                activePtySessionId = activeId,
+                ptySnapshot = activeSession?.snapshot?.value,
+                ptyTerminalBuffer = activeSession?.buffer?.value.orEmpty(),
+                ptyTerminalAlive = activeSession?.alive?.value == true,
+            )
+        }
+    }
+
+    private fun createQuickPtyTabInternal(): InteractivePtySession {
+        val id = "quick-pty-${quickPtyNextIndex++}"
         val workspace = File(getApplication<Application>().filesDir, "workspaces").apply { mkdirs() }
         val session = InteractivePtySession(
+            sessionId = id,
+            label = "bash",
             installer = installer,
             scope = viewModelScope,
             workspaceDir = workspace,
             guestWorkspacePath = "/workspace",
         )
-        quickPtySession = session
+        quickPtySessions[id] = session
         viewModelScope.launch {
-            session.buffer.collect { text ->
-                _state.update { it.copy(ptyTerminalBuffer = text) }
+            session.snapshot.collect { snap ->
+                if (_state.value.activePtySessionId == id) {
+                    _state.update { it.copy(ptySnapshot = snap, ptyTerminalBuffer = snap.plainText) }
+                }
             }
         }
         viewModelScope.launch {
             session.alive.collect { alive ->
-                _state.update { it.copy(ptyTerminalAlive = alive) }
+                val tabs = quickPtySessions.values.map { s ->
+                    TerminalSessionTabUi(id = s.sessionId, title = s.label, alive = s.alive.value)
+                }
+                _state.update { current ->
+                    current.copy(
+                        ptySessionTabs = tabs,
+                        ptyTerminalAlive = if (current.activePtySessionId == id) alive else current.ptyTerminalAlive,
+                    )
+                }
             }
         }
         session.ensureStarted()
+        syncQuickPtyTabsUi(activeIdOverride = id)
+        return session
+    }
+
+    fun ensureQuickPtyStarted() {
+        val active = quickPtySessions[_state.value.activePtySessionId] ?: quickPtySessions.values.firstOrNull()
+        if (active != null) {
+            if (active.ensureStarted()) {
+                syncQuickPtyTabsUi(activeIdOverride = active.sessionId)
+            }
+            return
+        }
+        createQuickPtyTabInternal()
+    }
+
+    fun newQuickPtyTab() {
+        if (quickPtySessions.size >= 6) return
+        createQuickPtyTabInternal()
+    }
+
+    fun selectQuickPtyTab(tabId: String) {
+        val target = quickPtySessions[tabId] ?: return
+        target.ensureStarted()
+        syncQuickPtyTabsUi(activeIdOverride = tabId)
+    }
+
+    fun closeQuickPtyTab(tabId: String) {
+        if (quickPtySessions.size <= 1) return
+        quickPtySessions.remove(tabId)?.close()
+        syncQuickPtyTabsUi()
+    }
+
+    private fun activeQuickPty(): InteractivePtySession? {
+        ensureQuickPtyStarted()
+        return quickPtySessions[_state.value.activePtySessionId] ?: quickPtySessions.values.firstOrNull()
     }
 
     fun sendQuickPtyCommand(command: String) {
@@ -5818,41 +5899,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clearQuickPty()
             return
         }
-        ensureQuickPtyStarted()
-        quickPtySession?.sendLine(command)
+        activeQuickPty()?.sendLine(command)
     }
 
     fun sendQuickPtyRaw(raw: String) {
-        ensureQuickPtyStarted()
-        quickPtySession?.sendRaw(raw)
+        activeQuickPty()?.sendRaw(raw)
+    }
+
+    fun pasteQuickPty(text: String) {
+        activeQuickPty()?.pasteText(text)
+    }
+
+    fun resizeQuickPty(rows: Int, cols: Int) {
+        quickPtySessions[_state.value.activePtySessionId]?.resize(rows, cols)
     }
 
     fun interruptQuickPty() {
-        quickPtySession?.sendInterrupt()
+        quickPtySessions[_state.value.activePtySessionId]?.sendInterrupt()
     }
 
     fun clearQuickPty() {
-        quickPtySession?.clearBuffer()
+        quickPtySessions[_state.value.activePtySessionId]?.clearBuffer()
     }
 
     fun restartQuickPty() {
-        ensureQuickPtyStarted()
-        quickPtySession?.restart()
+        activeQuickPty()?.restart()
     }
 
-    fun ensureProjectPtyStarted() {
-        val project = _state.value.activeProject ?: return
-        val existing = projectPtySession
-        if (existing != null && projectPtySessionProjectId == project.id) {
-            if (existing.ensureStarted()) {
-                _state.update { it.copy(projectPtyTerminalAlive = true) }
-            }
-            return
+    private fun syncProjectPtyTabsUi(activeIdOverride: String? = null) {
+        val activeId = activeIdOverride ?: _state.value.activeProjectPtySessionId.takeIf { it in projectPtySessions }
+            ?: projectPtySessions.keys.firstOrNull().orEmpty()
+        val activeSession = projectPtySessions[activeId]
+        val tabs = projectPtySessions.values.map { s ->
+            TerminalSessionTabUi(id = s.sessionId, title = s.label, alive = s.alive.value)
         }
-        existing?.close()
+        _state.update {
+            it.copy(
+                projectPtySessionTabs = tabs,
+                activeProjectPtySessionId = activeId,
+                projectPtySnapshot = activeSession?.snapshot?.value,
+                projectPtyTerminalBuffer = activeSession?.buffer?.value.orEmpty(),
+                projectPtyTerminalAlive = activeSession?.alive?.value == true,
+            )
+        }
+    }
+
+    private fun createProjectPtyTabInternal(project: Project): InteractivePtySession {
+        val id = "proj-pty-${projectPtyNextIndex++}"
         val workspace = projectWorkspaceRoot(project)
         val guestRoot = projectGuestRoot(project)
         val session = InteractivePtySession(
+            sessionId = id,
+            label = "bash",
             installer = installer,
             scope = viewModelScope,
             workspaceDir = workspace,
@@ -5872,23 +5970,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             },
         )
-        projectPtySession = session
-        projectPtySessionProjectId = project.id
+        projectPtySessions[id] = session
         viewModelScope.launch {
-            session.buffer.collect { text ->
-                if (projectPtySessionProjectId == project.id) {
-                    _state.update { it.copy(projectPtyTerminalBuffer = text) }
+            session.snapshot.collect { snap ->
+                if (projectPtySessionProjectId == project.id && _state.value.activeProjectPtySessionId == id) {
+                    _state.update { it.copy(projectPtySnapshot = snap, projectPtyTerminalBuffer = snap.plainText) }
                 }
             }
         }
         viewModelScope.launch {
             session.alive.collect { alive ->
                 if (projectPtySessionProjectId == project.id) {
-                    _state.update { it.copy(projectPtyTerminalAlive = alive) }
+                    val tabs = projectPtySessions.values.map { s ->
+                        TerminalSessionTabUi(id = s.sessionId, title = s.label, alive = s.alive.value)
+                    }
+                    _state.update { current ->
+                        current.copy(
+                            projectPtySessionTabs = tabs,
+                            projectPtyTerminalAlive = if (current.activeProjectPtySessionId == id) alive else current.projectPtyTerminalAlive,
+                        )
+                    }
                 }
             }
         }
         session.ensureStarted()
+        syncProjectPtyTabsUi(activeIdOverride = id)
+        return session
+    }
+
+    fun ensureProjectPtyStarted() {
+        val project = _state.value.activeProject ?: return
+        if (projectPtySessionProjectId != project.id) {
+            projectPtySessions.values.forEach { it.close() }
+            projectPtySessions.clear()
+            projectPtyNextIndex = 1
+            projectPtySessionProjectId = project.id
+        }
+        val existing = projectPtySessions[_state.value.activeProjectPtySessionId] ?: projectPtySessions.values.firstOrNull()
+        if (existing != null) {
+            if (existing.ensureStarted()) {
+                syncProjectPtyTabsUi(activeIdOverride = existing.sessionId)
+            }
+            return
+        }
+        createProjectPtyTabInternal(project)
+    }
+
+    fun newProjectPtyTab() {
+        val project = _state.value.activeProject ?: return
+        if (projectPtySessions.size >= 6) return
+        ensureProjectPtyStarted()
+        createProjectPtyTabInternal(project)
+    }
+
+    fun selectProjectPtyTab(tabId: String) {
+        val target = projectPtySessions[tabId] ?: return
+        target.ensureStarted()
+        syncProjectPtyTabsUi(activeIdOverride = tabId)
+    }
+
+    fun closeProjectPtyTab(tabId: String) {
+        if (projectPtySessions.size <= 1) return
+        projectPtySessions.remove(tabId)?.close()
+        syncProjectPtyTabsUi()
+    }
+
+    private fun activeProjectPty(): InteractivePtySession? {
+        ensureProjectPtyStarted()
+        return projectPtySessions[_state.value.activeProjectPtySessionId] ?: projectPtySessions.values.firstOrNull()
     }
 
     fun sendProjectPtyCommand(command: String) {
@@ -5896,26 +6045,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clearProjectPty()
             return
         }
-        ensureProjectPtyStarted()
-        projectPtySession?.sendLine(command)
+        activeProjectPty()?.sendLine(command)
     }
 
     fun sendProjectPtyRaw(raw: String) {
-        ensureProjectPtyStarted()
-        projectPtySession?.sendRaw(raw)
+        activeProjectPty()?.sendRaw(raw)
+    }
+
+    fun pasteProjectPty(text: String) {
+        activeProjectPty()?.pasteText(text)
+    }
+
+    fun resizeProjectPty(rows: Int, cols: Int) {
+        projectPtySessions[_state.value.activeProjectPtySessionId]?.resize(rows, cols)
     }
 
     fun interruptProjectPty() {
-        projectPtySession?.sendInterrupt()
+        projectPtySessions[_state.value.activeProjectPtySessionId]?.sendInterrupt()
     }
 
     fun clearProjectPty() {
-        projectPtySession?.clearBuffer()
+        projectPtySessions[_state.value.activeProjectPtySessionId]?.clearBuffer()
     }
 
     fun restartProjectPty() {
-        ensureProjectPtyStarted()
-        projectPtySession?.restart()
+        activeProjectPty()?.restart()
     }
 
     fun getCustomProviderApiKey(providerId: String): String =
@@ -6023,8 +6177,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
-        quickPtySession?.close()
-        projectPtySession?.close()
+        quickPtySessions.values.forEach { it.close() }
+        quickPtySessions.clear()
+        projectPtySessions.values.forEach { it.close() }
+        projectPtySessions.clear()
         stopAndroidLogcat()
         super.onCleared()
     }

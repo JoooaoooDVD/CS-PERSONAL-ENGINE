@@ -11,6 +11,7 @@ import java.io.OutputStream
 internal class NativeSpawnProcess private constructor(
     private val pid: Int,
     internal val outputFile: File,
+    private val stdinPfd: ParcelFileDescriptor,
     private val stdin: OutputStream,
     private val outputPump: Thread? = null,
 ) : Process() {
@@ -44,6 +45,14 @@ internal class NativeSpawnProcess private constructor(
         NativeSpawn.kill(pid, 2)
     }
 
+    /** Dynamically updates the kernel PTY window size (`TIOCSWINSZ` -> `SIGWINCH`). */
+    internal fun resizePty(rows: Int, columns: Int) {
+        runCatching {
+            val fd = stdinPfd.fd
+            if (fd >= 0) NativeSpawn.resizePty(fd, rows.coerceIn(10, 300), columns.coerceIn(20, 400))
+        }
+    }
+
     override fun destroyForcibly(): Process {
         NativeSpawn.kill(pid, 9)
         return this
@@ -60,6 +69,7 @@ internal class NativeSpawnProcess private constructor(
             pseudoTerminal: Boolean = false,
             ptyRows: Int = 40,
             ptyColumns: Int = 120,
+            onLivePtyChunk: ((ByteArray, Int) -> Unit)? = null,
         ): NativeSpawnProcess {
             outputFile.parentFile?.mkdirs()
             if (pseudoTerminal) outputFile.delete()
@@ -73,20 +83,30 @@ internal class NativeSpawnProcess private constructor(
                 ptyColumns,
             )
             check(spawned.size == 3 && spawned[0] > 0) { "Native runtime launch failed" }
-            val input = ParcelFileDescriptor.AutoCloseOutputStream(ParcelFileDescriptor.adoptFd(spawned[1]))
+            val adoptedStdinPfd = ParcelFileDescriptor.adoptFd(spawned[1])
+            val input = ParcelFileDescriptor.AutoCloseOutputStream(adoptedStdinPfd)
             val pump = spawned[2].takeIf { it >= 0 }?.let { outputFd ->
                 Thread({
                     runCatching {
                         ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.adoptFd(outputFd)).use { source ->
-                            FileOutputStream(outputFile, false).use { destination -> source.copyTo(destination) }
+                            FileOutputStream(outputFile, false).use { destination ->
+                                val buffer = ByteArray(16 * 1024)
+                                while (true) {
+                                    val readCount = source.read(buffer)
+                                    if (readCount <= 0) break
+                                    destination.write(buffer, 0, readCount)
+                                    onLivePtyChunk?.invoke(buffer, readCount)
+                                }
+                            }
                         }
                     }
                 }, "pocket-pty-output").apply {
                     isDaemon = true
+                    priority = Thread.MAX_PRIORITY - 1
                     start()
                 }
             }
-            return NativeSpawnProcess(spawned[0], outputFile, input, pump)
+            return NativeSpawnProcess(spawned[0], outputFile, adoptedStdinPfd, input, pump)
         }
     }
 }
@@ -109,4 +129,5 @@ private object NativeSpawn {
     ): IntArray
     external fun waitFor(pid: Int, noHang: Boolean): Int
     external fun kill(pid: Int, signal: Int): Int
+    external fun resizePty(fd: Int, rows: Int, columns: Int): Int
 }

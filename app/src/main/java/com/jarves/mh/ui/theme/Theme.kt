@@ -171,14 +171,10 @@ fun PocketTheme(
 ) {
     val systemDark = isSystemInDarkTheme()
     val scheme = when (themeMode) {
-        AppThemeMode.DARK -> if (antigravityMode) AntigravityCosmicDarkColors else ObsidianDarkColors
-        AppThemeMode.AMOLED -> if (antigravityMode) AntigravityCosmicAmoledColors else AmoledPitchBlackColors
+        AppThemeMode.DARK -> ObsidianDarkColors
+        AppThemeMode.AMOLED -> AmoledPitchBlackColors
         AppThemeMode.LIGHT -> LightColors
-        AppThemeMode.SYSTEM -> if (systemDark) {
-            if (antigravityMode) AntigravityCosmicDarkColors else ObsidianDarkColors
-        } else {
-            LightColors
-        }
+        AppThemeMode.SYSTEM -> if (systemDark) ObsidianDarkColors else LightColors
     }
     val isDark = themeMode != AppThemeMode.LIGHT && (themeMode != AppThemeMode.SYSTEM || systemDark)
 

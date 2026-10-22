@@ -58,10 +58,7 @@ class MainActivity : ComponentActivity() {
                 LocalLayoutDirection provides layoutDirection,
                 LocalActivityResultRegistryOwner provides this,
             ) {
-                PocketTheme(
-                    themeMode = state.themeMode,
-                    antigravityMode = state.agentKind == com.jarves.mh.model.AgentKind.ANTIGRAVITY,
-                ) {
+                PocketTheme(themeMode = state.themeMode) {
                     PocketDevApp(vm)
                 }
             }

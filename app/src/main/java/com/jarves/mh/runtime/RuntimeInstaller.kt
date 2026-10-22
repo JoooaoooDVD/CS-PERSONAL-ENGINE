@@ -1538,6 +1538,7 @@ class RuntimeInstaller(private val context: Context) {
         pseudoTerminal: Boolean = false,
         ptyRows: Int = 40,
         ptyColumns: Int = 120,
+        onLivePtyChunk: ((ByteArray, Int) -> Unit)? = null,
     ): Process {
         check(ensureRootfsCompatibilityLinks()) { "Core runtime has an invalid Linux filesystem layout" }
         require(
@@ -1636,6 +1637,7 @@ class RuntimeInstaller(private val context: Context) {
             pseudoTerminal = pseudoTerminal,
             ptyRows = ptyRows,
             ptyColumns = ptyColumns,
+            onLivePtyChunk = onLivePtyChunk,
         )
     }
 

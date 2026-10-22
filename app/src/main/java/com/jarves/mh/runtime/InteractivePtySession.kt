@@ -3,6 +3,7 @@ package com.jarves.mh.runtime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,23 +11,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
-import java.io.RandomAccessFile
 
 /**
- * Persistent, unrestricted interactive Linux PTY shell session (`bash --login -i`) backed by
- * [NativeSpawnProcess] with a real Unix pseudo-terminal (`posix_openpt` / `TIOCSWINSZ`).
- *
- * Unlike one-shot `bash -c` invocations, this session keeps shell state (`cd`, `export`,
- * virtualenvs, SSH sessions, interactive REPLs like `python3`/`node`, and interactive AI CLIs
- * like `codex`, `gemini`, `opencode`, `aider`, `qwen`, `gh`, `tmux`) alive continuously.
+ * Real Termux-class interactive Linux PTY session backed by [Vt100TerminalEmulator] and
+ * zero-polling kernel PTY streaming via [NativeSpawnProcess].
  */
 class InteractivePtySession(
+    val sessionId: String,
+    val label: String,
     private val installer: RuntimeInstaller,
     private val scope: CoroutineScope,
     private val workspaceDir: File,
     private val guestWorkspacePath: String = "/workspace",
     private val onPreviewUrlDetected: ((String) -> Unit)? = null,
 ) {
+    private val emulator = Vt100TerminalEmulator(initialRows = 38, initialCols = 92)
+
+    private val _snapshot = MutableStateFlow(emulator.snapshot())
+    val snapshot: StateFlow<TerminalScreenSnapshot> = _snapshot.asStateFlow()
+
     private val _buffer = MutableStateFlow("")
     val buffer: StateFlow<String> = _buffer.asStateFlow()
 
@@ -34,8 +37,9 @@ class InteractivePtySession(
     val alive: StateFlow<Boolean> = _alive.asStateFlow()
 
     private var process: Process? = null
-    private var readerJob: Job? = null
-    private val rawTranscript = StringBuilder()
+    private var snapshotJob: Job? = null
+    private var livenessJob: Job? = null
+    private val dirtySignal = Channel<Unit>(Channel.CONFLATED)
 
     @Synchronized
     fun ensureStarted(): Boolean {
@@ -48,100 +52,130 @@ class InteractivePtySession(
         return runCatching {
             val runtime = installer.installedRuntime()
             workspaceDir.mkdirs()
+            val rows = emulator.rows
+            val cols = emulator.cols
+            // Enable kernel PTY echo (`stty sane echo icrnl`), colors, and full PATH before exec'ing interactive bash!
             val initRc = """
+                stty sane echo icanon icrnl rows $rows cols $cols 2>/dev/null || true
                 export DEBIAN_FRONTEND=noninteractive
                 export APT_LISTCHANGES_FRONTEND=none
                 export PIP_BREAK_SYSTEM_PACKAGES=1
                 export NPM_CONFIG_PREFIX=/root/.npm-global
+                export TERM=xterm-256color
+                export COLORTERM=truecolor
                 export PATH="/root/.local/bin:/root/.npm-global/bin:/root/.bun/bin:/root/.cargo/bin:/root/.deno/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${'$'}PATH"
-                export PS1='root@cs-engine:\w# '
+                alias ls='ls --color=auto'
+                alias ll='ls -lah --color=auto'
+                alias grep='grep --color=auto'
+                export PS1='\[\033[1;32m\]root@cs-engine\[\033[0m\]:\[\033[1;36m\]\w\[\033[0m\]# '
                 cd ${shellSingleQuote(guestWorkspacePath)} 2>/dev/null || true
                 exec /usr/bin/bash --norc --noprofile -i
             """.trimIndent()
+            startSnapshotCoalescer()
             val spawned = installer.process(
                 proot = runtime.proot,
                 rootfs = runtime.rootfs,
                 workspace = workspaceDir,
                 environment = mapOf(
-                    "PS1" to "root@cs-engine:\\w# ",
                     "TERM" to "xterm-256color",
                     "COLORTERM" to "truecolor",
+                    "COLUMNS" to cols.toString(),
+                    "LINES" to rows.toString(),
                 ),
                 guestCommand = listOf("/usr/bin/bash", "-lc", initRc),
                 guestWorkspacePath = guestWorkspacePath,
                 pseudoTerminal = true,
-                ptyRows = 42,
-                ptyColumns = 110,
+                ptyRows = rows,
+                ptyColumns = cols,
+                onLivePtyChunk = { bytes, len ->
+                    emulator.feedBytes(bytes, len)
+                    dirtySignal.trySend(Unit)
+                },
             )
             process = spawned
             _alive.value = true
-            startReaderLoop(spawned)
+            startLivenessWatcher(spawned)
             true
         }.getOrDefault(false)
     }
 
-    private fun startReaderLoop(proc: Process) {
-        readerJob?.cancel()
-        val native = proc as? NativeSpawnProcess ?: return
-        readerJob = scope.launch(Dispatchers.IO) {
-            var offset = 0L
-            while (isActive && (proc.isAlive || native.outputFile.length() > offset)) {
-                val available = native.outputFile.length() - offset
-                if (available <= 0L) {
-                    delay(35)
-                    continue
+    private fun startSnapshotCoalescer() {
+        if (snapshotJob?.isActive == true) return
+        snapshotJob = scope.launch(Dispatchers.Default) {
+            for (signal in dirtySignal) {
+                // Coalesce burst bytes within an 8ms sub-frame window -> 120Hz crisp echo, zero UI flood!
+                delay(8)
+                while (dirtySignal.tryReceive().isSuccess) {
+                    // Drain any coalesced signals
                 }
-                val chunkSize = minOf(available, 16_384L).toInt()
-                val bytes = ByteArray(chunkSize)
-                val count = runCatching {
-                    RandomAccessFile(native.outputFile, "r").use { raf ->
-                        raf.seek(offset)
-                        raf.read(bytes)
-                    }
-                }.getOrDefault(0)
-                if (count > 0) {
-                    offset += count
-                    val decoded = bytes.decodeToString(0, count)
-                    synchronized(rawTranscript) {
-                        rawTranscript.append(decoded)
-                        if (rawTranscript.length > MAX_TRANSCRIPT_CHARS * 2) {
-                            rawTranscript.delete(0, rawTranscript.length - MAX_TRANSCRIPT_CHARS)
-                        }
-                        val cleaned = stripPtyAnsi(rawTranscript.toString()).takeLast(MAX_TRANSCRIPT_CHARS)
-                        _buffer.value = cleaned
-                        detectHttpUrl(cleaned)?.let { url -> onPreviewUrlDetected?.invoke(url) }
-                    }
+                val snap = emulator.snapshot(showBlockCursor = true)
+                _snapshot.value = snap
+                _buffer.value = snap.plainText
+                detectHttpUrl(snap.plainText.takeLast(800))?.let { url ->
+                    onPreviewUrlDetected?.invoke(url)
                 }
+            }
+        }
+    }
+
+    private fun startLivenessWatcher(proc: Process) {
+        livenessJob?.cancel()
+        livenessJob = scope.launch(Dispatchers.IO) {
+            while (isActive && proc.isAlive) {
+                delay(400)
             }
             _alive.value = false
         }
     }
 
+    fun resize(rows: Int, cols: Int) {
+        val r = rows.coerceIn(12, 200)
+        val c = cols.coerceIn(24, 260)
+        if (r == emulator.rows && c == emulator.cols) return
+        emulator.resize(r, c)
+        (process as? NativeSpawnProcess)?.resizePty(r, c)
+        dirtySignal.trySend(Unit)
+    }
+
+    /** Sends a full command line (used by CLI Store / Run-in-Terminal buttons). */
     fun sendLine(command: String) {
         if (!ensureStarted()) return
         val normalized = normalizeAptForRootPty(command)
-        sendRaw(normalized + "\n")
+        sendRaw(normalized + "\r")
     }
 
+    /** Sends raw keystrokes/bytes directly to the PTY master fd with zero buffering delay. */
     fun sendRaw(raw: String) {
+        if (raw.isEmpty()) return
         val active = process
         if (active == null || !active.isAlive) {
             if (!ensureStarted()) return
         }
         val target = process ?: return
+        val bytes = raw.toByteArray(Charsets.UTF_8)
         scope.launch(Dispatchers.IO) {
             runCatching {
-                target.outputStream.write(raw.toByteArray(Charsets.UTF_8))
+                target.outputStream.write(bytes)
                 target.outputStream.flush()
             }
         }
+    }
+
+    fun pasteText(text: String) {
+        if (text.isEmpty()) return
+        val snap = _snapshot.value
+        val payload = if (snap.bracketedPaste) {
+            "\u001B[200~$text\u001B[201~"
+        } else {
+            text
+        }
+        sendRaw(payload)
     }
 
     fun sendInterrupt() {
         val active = process ?: return
         scope.launch(Dispatchers.IO) {
             runCatching {
-                // Send ETX (^C) over PTY master AND SIGINT to foreground process group
                 active.outputStream.write(byteArrayOf(3))
                 active.outputStream.flush()
                 (active as? NativeSpawnProcess)?.interrupt()
@@ -150,33 +184,34 @@ class InteractivePtySession(
     }
 
     fun clearBuffer() {
-        synchronized(rawTranscript) {
-            rawTranscript.clear()
-            _buffer.value = ""
-        }
+        emulator.clearAll()
+        dirtySignal.trySend(Unit)
         if (process?.isAlive == true) {
-            sendRaw("\n")
+            sendRaw("\u000C") // Ctrl+L redraw prompt cleanly
         }
     }
 
     @Synchronized
     fun restart() {
-        close()
+        runCatching { process?.destroy() }
+        process = null
+        emulator.clearAll()
+        dirtySignal.trySend(Unit)
         ensureStarted()
     }
 
     @Synchronized
     fun close() {
-        readerJob?.cancel()
-        readerJob = null
+        snapshotJob?.cancel()
+        snapshotJob = null
+        livenessJob?.cancel()
+        livenessJob = null
         runCatching { process?.destroy() }
         process = null
         _alive.value = false
     }
 
     companion object {
-        private const val MAX_TRANSCRIPT_CHARS = 48_000
-
         internal fun normalizeAptForRootPty(command: String): String {
             val trimmed = command.trim()
             if (trimmed.isEmpty()) return command
@@ -190,15 +225,12 @@ class InteractivePtySession(
 
         internal fun stripPtyAnsi(input: String): String {
             if (input.isEmpty()) return ""
-            // Handle clear-screen sequences (\u001B[2J or \u001Bc) by keeping text after the last clear
             val afterClear = input
                 .substringAfterLast("\u001B[2J")
                 .substringAfterLast("\u001Bc")
             val withoutOsc = afterClear.replace(Regex("\u001B\\][^\\u0007\\u001B]*(?:\u0007|\u001B\\\\)"), "")
             val withoutCsi = withoutOsc.replace(Regex("\u001B\\[[0-9;?]*[ -/]*[@-~]"), "")
             val withoutSingleEsc = withoutCsi.replace(Regex("\u001B[@-Z\\\\-_]"), "")
-            // Handle carriage-return progress bars (`\r` not followed by `\n`) cleanly per line.
-            // Note: use `.split('\n')` rather than `lineSequence()` because `lineSequence()` splits on `\r` too!
             return withoutSingleEsc
                 .replace("\r\n", "\n")
                 .split('\n')

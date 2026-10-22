@@ -10,6 +10,7 @@ import com.jarves.mh.model.ProviderProtocol
 import com.jarves.mh.model.SavedCustomProvider
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.model.providersForAgent
+import com.jarves.mh.ui.computeLineDiffStats
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.ServerSocket
@@ -268,5 +269,54 @@ class CsPersonalEngineUpgradeTest {
         assertTrue("qwen-code-cli" in ids)
         assertTrue("github-cli" in ids)
         assertTrue("linux-power-pack" in ids)
+    }
+
+    @Test
+    fun vt100TerminalEmulatorHandlesTypingBackspaceColorsAltScreenAndResize() {
+        val emu = Vt100TerminalEmulator(initialRows = 24, initialCols = 80)
+
+        // 1. Colored prompt + direct typing + kernel backspace (`\b \b` / `\b\e[K`) + Enter (`\r\n`)
+        emu.feedText("\u001B]0;root@cs-engine:/workspace\u0007")
+        emu.feedText("\u001B[?2004h")
+        emu.feedText("\u001B[1;32mroot@cs-engine\u001B[0m:\u001B[1;36m/workspace\u001B[0m# git sttaus\b\b\b\batus\r\nOn branch main\r\n")
+        val snap1 = emu.snapshot(showBlockCursor = true)
+        assertEquals("root@cs-engine:/workspace", snap1.windowTitle)
+        assertTrue(snap1.bracketedPaste)
+        assertFalse(snap1.alternateScreen)
+        assertTrue("root@cs-engine:/workspace# git status" in snap1.plainText)
+        assertTrue("On branch main" in snap1.plainText)
+
+        // 2. Alternate Screen Buffer (`vim` / `htop` / `codex` TUI) preserves primary shell buffer!
+        emu.feedText("\u001B[?1049h\u001B[2J\u001B[1;1H\u001B[38;2;52;211;153mNVIM v0.10.0\u001B[0m")
+        val altSnap = emu.snapshot(showBlockCursor = true)
+        assertTrue(altSnap.alternateScreen)
+        assertTrue("NVIM v0.10.0" in altSnap.plainText)
+        assertFalse("On branch main" in altSnap.plainText)
+
+        // Exit alternate screen -> restores primary prompt & output intact!
+        emu.feedText("\u001B[?1049l")
+        val restoredSnap = emu.snapshot(showBlockCursor = true)
+        assertFalse(restoredSnap.alternateScreen)
+        assertTrue("On branch main" in restoredSnap.plainText)
+
+        // 3. Dynamic viewport resize (`TIOCSWINSZ`)
+        emu.resize(rows = 40, cols = 100)
+        val resized = emu.snapshot()
+        assertEquals(40, resized.rows)
+        assertEquals(100, resized.cols)
+    }
+
+    @Test
+    fun computeLineDiffStatsCalculatesExactAdditionsAndDeletions() {
+        assertEquals(0 to 0, computeLineDiffStats("val a = 1\nval b = 2", "val a = 1\nval b = 2"))
+        assertEquals(2 to 0, computeLineDiffStats("line1\nline2", "line1\nline2\nline3\nline4"))
+        assertEquals(0 to 1, computeLineDiffStats("line1\nline2\nline3", "line1\nline3"))
+        assertEquals(
+            2 to 1,
+            computeLineDiffStats(
+                "fun greet() {\n    println(\"old\")\n}",
+                "fun greet() {\n    println(\"new 1\")\n    println(\"new 2\")\n}",
+            ),
+        )
     }
 }

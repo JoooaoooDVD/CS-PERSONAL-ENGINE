@@ -496,8 +496,13 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onSetFullAccessTerminal = viewModel::setFullAccessTerminalEnabled,
             onSetInteractivePtyMode = viewModel::setInteractivePtyMode,
             onEnsureProjectPtyStarted = viewModel::ensureProjectPtyStarted,
+            onNewProjectPtyTab = viewModel::newProjectPtyTab,
+            onSelectProjectPtyTab = viewModel::selectProjectPtyTab,
+            onCloseProjectPtyTab = viewModel::closeProjectPtyTab,
             onSendProjectPtyCommand = viewModel::sendProjectPtyCommand,
             onSendProjectPtyRaw = viewModel::sendProjectPtyRaw,
+            onPasteProjectPty = viewModel::pasteProjectPty,
+            onResizeProjectPty = viewModel::resizeProjectPty,
             onInterruptProjectPty = viewModel::interruptProjectPty,
             onClearProjectPty = viewModel::clearProjectPty,
             onRestartProjectPty = viewModel::restartProjectPty,
@@ -2669,7 +2674,7 @@ private fun RootScreenHost(
     }
     if (showQuickTerminal) {
         var showQuickCliHub by rememberSaveable { mutableStateOf(false) }
-        QuickTerminalSheet(
+        FullScreenTermuxOverlay(
             onDismiss = { showQuickTerminal = false },
         ) {
             TerminalScreen(
@@ -2689,22 +2694,30 @@ private fun RootScreenHost(
                 interactivePtyMode = state.interactivePtyMode,
                 onTogglePtyMode = viewModel::setInteractivePtyMode,
                 ptyBuffer = state.ptyTerminalBuffer,
+                ptySnapshot = state.ptySnapshot,
                 ptyAlive = state.ptyTerminalAlive,
+                sessionTabs = state.ptySessionTabs,
+                activeSessionTabId = state.activePtySessionId,
+                onSelectSessionTab = viewModel::selectQuickPtyTab,
+                onNewSessionTab = viewModel::newQuickPtyTab,
+                onCloseSessionTab = viewModel::closeQuickPtyTab,
                 onEnsurePtyStarted = viewModel::ensureQuickPtyStarted,
                 onSendPtyCommand = viewModel::sendQuickPtyCommand,
                 onSendPtyRaw = viewModel::sendQuickPtyRaw,
+                onPastePty = viewModel::pasteQuickPty,
+                onResizePty = viewModel::resizeQuickPty,
                 onInterruptPty = viewModel::interruptQuickPty,
                 onClearPty = viewModel::clearQuickPty,
                 onRestartPty = viewModel::restartQuickPty,
                 onOpenCliHub = { showQuickCliHub = true },
+                onCloseFullScreen = { showQuickTerminal = false },
             )
         }
         if (showQuickCliHub) {
             CliMarketplaceSheet(
                 savedCustomClis = state.savedCustomClis,
                 onRunCommandInTerminal = { cmd ->
-                    if (state.interactivePtyMode) viewModel.sendQuickPtyCommand(cmd)
-                    else viewModel.runTerminalCommand(cmd)
+                    viewModel.sendQuickPtyCommand(cmd)
                 },
                 onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
                 onRemoveCustomCli = viewModel::removeCustomCliPackage,
@@ -2715,78 +2728,18 @@ private fun RootScreenHost(
 }
 
 @Composable
-private fun QuickTerminalSheet(
+private fun FullScreenTermuxOverlay(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    var sheetFraction by rememberSaveable { mutableFloatStateOf(0.60f) }
     BackHandler(onBack = onDismiss)
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val density = LocalDensity.current
-        val maxHeightPx = with(density) { maxHeight.toPx() }
-        val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
-        LaunchedEffect(keyboardVisible) {
-            if (keyboardVisible) sheetFraction = 0.85f
-        }
-        val dragState = rememberDraggableState { dragAmount ->
-            sheetFraction = (sheetFraction - dragAmount / maxHeightPx)
-                .coerceIn(0.40f, 0.85f)
-        }
-        Box(Modifier.fillMaxSize()) {
-            // Dimmed backdrop — tap to dismiss.
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                        onClick = onDismiss,
-                    ),
-            )
-            // This container consumes the keyboard inset outside the sheet rather
-            // than turning it into empty padding inside the terminal.
-            Box(Modifier.fillMaxSize().imePadding()) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .fillMaxHeight(sheetFraction)
-                        .draggable(
-                            state = dragState,
-                            orientation = Orientation.Vertical,
-                            startDragImmediately = false,
-                        ),
-                    shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-                    // Plain theme surface without tonal elevation: the app theme doesn't define
-                    // surfaceContainer* (falls back to M3 lavender) and tonal elevation tints
-                    // every nested Surface orange.
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 28.dp,
-                ) {
-                    Column(Modifier.fillMaxSize().navigationBarsPadding()) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(24.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                Modifier
-                                    .width(36.dp)
-                                    .height(4.dp)
-                                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f), CircleShape),
-                            )
-                        }
-                        HorizontalDivider(
-                            thickness = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                        )
-                        Box(Modifier.weight(1f).fillMaxWidth()) { content() }
-                    }
-                }
-            }
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = Color(0xFF000000),
+        tonalElevation = 0.dp,
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            content()
         }
     }
 }
@@ -3704,8 +3657,8 @@ private fun ProjectsScreen(
                         Column {
                             Text("CS Personal Engine", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                             Text(
-                                if (state.agentKind == AgentKind.ANTIGRAVITY) "Antigravity Cosmic IDE · Full Linux Root"
-                                else "Obsidian Carbon IDE · Full Linux Root",
+                                if (state.agentKind == AgentKind.ANTIGRAVITY) "Antigravity Mobile IDE · Termux Root"
+                                else "Obsidian Mobile IDE · Termux Root",
                                 fontSize = 10.5.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -4639,8 +4592,13 @@ private fun WorkspaceScreen(
     onSetFullAccessTerminal: (Boolean) -> Unit = {},
     onSetInteractivePtyMode: (Boolean) -> Unit = {},
     onEnsureProjectPtyStarted: () -> Unit = {},
+    onNewProjectPtyTab: () -> Unit = {},
+    onSelectProjectPtyTab: (String) -> Unit = {},
+    onCloseProjectPtyTab: (String) -> Unit = {},
     onSendProjectPtyCommand: (String) -> Unit = {},
     onSendProjectPtyRaw: (String) -> Unit = {},
+    onPasteProjectPty: (String) -> Unit = {},
+    onResizeProjectPty: (Int, Int) -> Unit = { _, _ -> },
     onInterruptProjectPty: () -> Unit = {},
     onClearProjectPty: () -> Unit = {},
     onRestartProjectPty: () -> Unit = {},
@@ -4652,7 +4610,15 @@ private fun WorkspaceScreen(
     var showCustomProviderStudio by rememberSaveable { mutableStateOf(false) }
     var editingCustomProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     var showWorkspaceCliHub by rememberSaveable { mutableStateOf(false) }
-    BackHandler(onBack = onBack)
+    var terminalFullScreen by rememberSaveable { mutableStateOf(true) }
+    var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
+    BackHandler {
+        if (selectedTab == WorkspaceTab.TERMINAL && terminalFullScreen) {
+            selectedTab = WorkspaceTab.CHAT
+        } else {
+            onBack()
+        }
+    }
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -4748,7 +4714,6 @@ private fun WorkspaceScreen(
         }
     }
 
-    var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     var showChats by rememberSaveable { mutableStateOf(false) }
     var showAndroidBuild by rememberSaveable { mutableStateOf(false) }
     val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
@@ -4799,11 +4764,9 @@ private fun WorkspaceScreen(
     if (state.openedFile != null) {
         FileViewerScreen(
             file = state.openedFile,
+            aiChangeForFile = state.changes.firstOrNull { it.path == state.openedFile.path },
             editingAllowed = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
-            onClose = {
-                onCloseFile()
-                selectedTab = WorkspaceTab.FILES
-            },
+            onClose = onCloseFile,
             onBeginEdit = onBeginFileEdit,
             onDraftChange = onUpdateFileDraft,
             onCancelEdit = onCancelFileEdit,
@@ -4950,159 +4913,190 @@ private fun WorkspaceScreen(
         )
     }
 
+    val totalWorkspaceAdditions = remember(state.changes) { state.changes.sumOf { it.additions } }
+    val totalWorkspaceDeletions = remember(state.changes) { state.changes.sumOf { it.deletions } }
+    val isFullScreenTerminalActive = selectedTab == WorkspaceTab.TERMINAL && terminalFullScreen
+
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = if (isFullScreenTerminalActive) Color(0xFF000000) else MaterialTheme.colorScheme.background,
         topBar = {
-            Surface(
-                color = MaterialTheme.colorScheme.background,
-                modifier = Modifier.fillMaxWidth().statusBarsPadding(),
-            ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    // Row 1: Unified IDE Project & Engine/Model Header
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(onClick = onBack, modifier = Modifier.size(38.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects), modifier = Modifier.size(20.dp))
-                        }
-                        Column(
+            if (!isFullScreenTerminalActive) {
+                Surface(
+                    color = MaterialTheme.colorScheme.background,
+                    modifier = Modifier.fillMaxWidth().statusBarsPadding(),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // Row 1: Unified IDE Project & Engine/Model Header (Pure Dark-Grey / Black!)
+                        Row(
                             modifier = Modifier
-                                .weight(1f)
-                                .clickable { showQuickEngineSheet = true }
-                                .padding(horizontal = 4.dp),
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                state.activeProject?.name.orEmpty(),
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            IconButton(onClick = onBack, modifier = Modifier.size(38.dp)) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects), modifier = Modifier.size(20.dp))
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { showQuickEngineSheet = true }
+                                    .padding(horizontal = 4.dp),
                             ) {
-                                if (isAntigravityActive) {
-                                    AntigravitySparkMark(isRunning = state.isRunning, size = 12.dp)
-                                } else {
-                                    AnimatedEngineOrb(isRunning = state.isRunning, size = 11.dp)
-                                }
                                 Text(
-                                    text = "$headerAgentLabel · $headerModelLabel",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = if (isAntigravityActive) AntigravityBlue else MaterialTheme.colorScheme.primary,
+                                    state.activeProject?.name.orEmpty(),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 15.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                            }
-                        }
-
-                        Surface(
-                            modifier = Modifier
-                                .padding(end = 4.dp)
-                                .enginePressScale {
-                                    onRefreshGitStatus()
-                                    showGitStudio = true
-                                },
-                            shape = RoundedCornerShape(10.dp),
-                            color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                            border = BorderStroke(
-                                1.dp,
-                                if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
-                            ),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Icon(
-                                    Icons.Default.CloudUpload,
-                                    contentDescription = "Git & GitHub Push",
-                                    modifier = Modifier.size(14.dp),
-                                    tint = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
-                                    text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                        if (isAndroidProject) {
-                            IconButton(
-                                onClick = { showAndroidBuild = true },
-                                enabled = !state.isRunning && !state.projectTerminalRunning,
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android), modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        IconButton(onClick = { showChats = true }, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Default.History, stringResource(R.string.ws_project_chats), modifier = Modifier.size(19.dp))
-                        }
-                    }
-
-                    // Row 2: Sleek Segmented Workspace Mode Strip (replaces bulky bottom NavigationBar!)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
-                            val selected = selectedTab == tab
-                            val activeColor = if (isAntigravityActive) AntigravityBlue else MaterialTheme.colorScheme.primary
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable {
-                                        selectedTab = tab
-                                        if (tab == WorkspaceTab.FILES) onRefreshFiles()
-                                        if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
-                                    },
-                                shape = RoundedCornerShape(11.dp),
-                                color = if (selected) activeColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (selected) activeColor.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
-                                ),
-                            ) {
                                 Row(
-                                    modifier = Modifier.padding(vertical = 7.dp, horizontal = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                                 ) {
-                                    Icon(
-                                        tab.icon,
-                                        contentDescription = stringResource(tab.labelRes),
-                                        modifier = Modifier.size(14.dp),
-                                        tint = if (selected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Spacer(Modifier.width(5.dp))
+                                    if (isAntigravityActive) {
+                                        AntigravitySparkMark(isRunning = state.isRunning, size = 12.dp)
+                                    } else {
+                                        AnimatedEngineOrb(isRunning = state.isRunning, size = 11.dp)
+                                    }
                                     Text(
-                                        text = stringResource(tab.labelRes),
+                                        text = "$headerAgentLabel · $headerModelLabel",
                                         fontSize = 11.sp,
-                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                        color = if (selected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isAntigravityActive) com.jarves.mh.ui.theme.EngineEmerald else MaterialTheme.colorScheme.primary,
                                         maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                             }
+
+                            Surface(
+                                modifier = Modifier
+                                    .padding(end = 4.dp)
+                                    .enginePressScale {
+                                        onRefreshGitStatus()
+                                        showGitStudio = true
+                                    },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
+                                ),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.CloudUpload,
+                                        contentDescription = "Git & GitHub Push",
+                                        modifier = Modifier.size(14.dp),
+                                        tint = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            if (isAndroidProject) {
+                                IconButton(
+                                    onClick = { showAndroidBuild = true },
+                                    enabled = !state.isRunning && !state.projectTerminalRunning,
+                                    modifier = Modifier.size(36.dp),
+                                ) {
+                                    if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android), modifier = Modifier.size(20.dp))
+                                }
+                            }
+                            IconButton(onClick = { showChats = true }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Default.History, stringResource(R.string.ws_project_chats), modifier = Modifier.size(19.dp))
+                            }
                         }
+
+                        // Row 2: Sleek Mobile IDE Mode Strip (Chat · Files · Termux · Diffs +A/-D · Web)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            WorkspaceTab.entries.forEach { tab ->
+                                val selected = selectedTab == tab
+                                val activeColor = if (isAntigravityActive) com.jarves.mh.ui.theme.EngineEmerald else MaterialTheme.colorScheme.primary
+                                val tabLabel = when {
+                                    tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() ->
+                                        "+$totalWorkspaceAdditions -$totalWorkspaceDeletions"
+                                    tab == WorkspaceTab.CHANGES -> "Diffs"
+                                    tab == WorkspaceTab.TERMINAL -> "Termux"
+                                    else -> stringResource(tab.labelRes)
+                                }
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(if (tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty()) 1.25f else 1f)
+                                        .clickable {
+                                            selectedTab = tab
+                                            if (tab == WorkspaceTab.FILES) onRefreshFiles()
+                                            if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
+                                        },
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (selected) activeColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        when {
+                                            selected -> activeColor.copy(alpha = 0.6f)
+                                            tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() -> com.jarves.mh.ui.theme.EngineEmerald.copy(alpha = 0.42f)
+                                            else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                                        },
+                                    ),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(vertical = 6.5.dp, horizontal = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center,
+                                    ) {
+                                        Icon(
+                                            tab.icon,
+                                            contentDescription = tabLabel,
+                                            modifier = Modifier.size(13.dp),
+                                            tint = when {
+                                                selected -> activeColor
+                                                tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() -> com.jarves.mh.ui.theme.EngineEmerald
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = tabLabel,
+                                            fontSize = 10.5.sp,
+                                            fontFamily = if (tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty()) FontFamily.Monospace else FontFamily.Default,
+                                            fontWeight = if (selected || (tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty())) FontWeight.ExtraBold else FontWeight.Medium,
+                                            color = when {
+                                                selected -> activeColor
+                                                tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() -> com.jarves.mh.ui.theme.EngineEmerald
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                 }
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding).navigationBarsPadding()) {
+        val bodyModifier = if (isFullScreenTerminalActive) {
+            Modifier.fillMaxSize().padding(padding)
+        } else {
+            Modifier.fillMaxSize().padding(padding).navigationBarsPadding()
+        }
+        Box(bodyModifier) {
             when (selectedTab) {
                 WorkspaceTab.CHAT -> ChatTab(
                     state.messages,
@@ -5136,11 +5130,7 @@ private fun WorkspaceScreen(
                     onRunInTerminal = { command ->
                         selectedTab = WorkspaceTab.TERMINAL
                         onTerminalOpened()
-                        if (state.interactivePtyMode) {
-                            onSendProjectPtyCommand(command)
-                        } else {
-                            onExecuteFromChat(command)
-                        }
+                        onSendProjectPtyCommand(command)
                     },
                     queuedFollowUps = state.queuedFollowUps,
                     onSteerFollowUp = onSteerFollowUp,
@@ -5175,6 +5165,14 @@ private fun WorkspaceScreen(
                     onOpenCliStore = { showWorkspaceCliHub = true },
                     onSelectAntigravityEffort = onSetAntigravityEffort,
                     onToggleFullAccess = onSetFullAccessTerminal,
+                    changes = state.changes,
+                    gitBranch = if (state.gitStatus.initialized) state.gitStatus.branch else "",
+                    onOpenFile = onOpenFile,
+                    onKeepAllChanges = onKeepChanges,
+                    onUndoAllChanges = onUndoChanges,
+                    onKeepFileChange = onKeepFileChange,
+                    onUndoFileChange = onUndoFileChange,
+                    onOpenChangesTab = { selectedTab = WorkspaceTab.CHANGES },
                 )
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
@@ -5239,25 +5237,37 @@ private fun WorkspaceScreen(
                     },
                     showThemeAction = false,
                     showQuickCommands = true,
-                    compactHeader = true,
+                    compactHeader = !terminalFullScreen,
                     interactivePtyMode = state.interactivePtyMode,
                     onTogglePtyMode = onSetInteractivePtyMode,
                     ptyBuffer = state.projectPtyTerminalBuffer,
+                    ptySnapshot = state.projectPtySnapshot,
                     ptyAlive = state.projectPtyTerminalAlive,
+                    sessionTabs = state.projectPtySessionTabs,
+                    activeSessionTabId = state.activeProjectPtySessionId,
+                    onSelectSessionTab = onSelectProjectPtyTab,
+                    onNewSessionTab = onNewProjectPtyTab,
+                    onCloseSessionTab = onCloseProjectPtyTab,
                     onEnsurePtyStarted = onEnsureProjectPtyStarted,
                     onSendPtyCommand = onSendProjectPtyCommand,
                     onSendPtyRaw = onSendProjectPtyRaw,
+                    onPastePty = onPasteProjectPty,
+                    onResizePty = onResizeProjectPty,
                     onInterruptPty = onInterruptProjectPty,
                     onClearPty = onClearProjectPty,
                     onRestartPty = onRestartProjectPty,
                     onOpenCliHub = { showWorkspaceCliHub = true },
+                    onCloseFullScreen = if (terminalFullScreen) ({ selectedTab = WorkspaceTab.CHAT }) else null,
+                    isImmersiveFullScreen = terminalFullScreen,
+                    onToggleImmersiveFullScreen = { terminalFullScreen = !terminalFullScreen },
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
-                    state.changes,
-                    onUndoChanges,
-                    onKeepChanges,
-                    onUndoFileChange,
-                    onKeepFileChange,
+                    changes = state.changes,
+                    onOpenFile = onOpenFile,
+                    onUndo = onUndoChanges,
+                    onKeep = onKeepChanges,
+                    onUndoFile = onUndoFileChange,
+                    onKeepFile = onKeepFileChange,
                 )
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
             }
@@ -5966,6 +5976,7 @@ private fun AndroidHealthCheckCard(
 @Composable
 private fun FileViewerScreen(
     file: OpenedFileState,
+    aiChangeForFile: ChangeItem? = null,
     editingAllowed: Boolean,
     onClose: () -> Unit,
     onBeginEdit: () -> Unit,
@@ -6042,13 +6053,51 @@ private fun FileViewerScreen(
     val gutterText = if (darkTheme) Color(0xFF6E7681) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
     val toolbarBackground = if (darkTheme) Color(0xFF161B22) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
 
+    val activeEditorText = if (file.editing) editorValue.text else file.content.orEmpty()
+    val totalFileLines = remember(activeEditorText) {
+        if (activeEditorText.isEmpty()) 0 else activeEditorText.count { it == '\n' } + 1
+    }
+    val liveManualDiff = remember(file.content, editorValue.text, file.editing, file.dirty) {
+        if (file.editing && file.dirty) computeLineDiffStats(file.content.orEmpty(), editorValue.text) else null
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text(fileName, fontWeight = FontWeight.SemiBold)
-                        Text(file.path, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            FileExtIdeBadge(path = file.path)
+                            Text(
+                                text = fileName,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            when {
+                                liveManualDiff != null -> DiffCountPills(
+                                    additions = liveManualDiff.first,
+                                    deletions = liveManualDiff.second,
+                                )
+                                aiChangeForFile != null -> DiffCountPills(
+                                    additions = aiChangeForFile.additions,
+                                    deletions = aiChangeForFile.deletions,
+                                )
+                            }
+                        }
+                        Text(
+                            text = "$totalFileLines lines · ${file.path}",
+                            fontSize = 10.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 },
                 navigationIcon = {
@@ -6709,10 +6758,20 @@ private fun ChatTab(
     onOpenCliStore: () -> Unit = {},
     onSelectAntigravityEffort: (String) -> Unit = {},
     onToggleFullAccess: (Boolean) -> Unit = {},
+    changes: List<ChangeItem> = emptyList(),
+    gitBranch: String = "",
+    onOpenFile: ((String) -> Unit)? = null,
+    onKeepAllChanges: () -> Unit = {},
+    onUndoAllChanges: () -> Unit = {},
+    onKeepFileChange: (String) -> Unit = {},
+    onUndoFileChange: (String) -> Unit = {},
+    onOpenChangesTab: () -> Unit = {},
 ) {
     val view = LocalView.current
     val isAntigravity = agentKind == AgentKind.ANTIGRAVITY
     val displayAgentHeader = if (activeModelLabel.isNotBlank()) "$activeAgentLabel · $activeModelLabel" else activeAgentLabel
+    val totalChatAdditions = remember(changes) { changes.sumOf { it.additions } }
+    val totalChatDeletions = remember(changes) { changes.sumOf { it.additions * 0 + it.deletions } }
     DisposableEffect(isRunning) {
         view.keepScreenOn = isRunning
         onDispose { view.keepScreenOn = false }
@@ -6772,6 +6831,7 @@ private fun ChatTab(
                             thinkingActive = false,
                             elapsedSeconds = (message.workedMillis / 1_000L).coerceAtLeast(1L),
                             onRunInTerminal = onRunInTerminal,
+                            onOpenFile = onOpenFile,
                         )
                     } else {
                         val isStreamingLast = isRunning &&
@@ -6797,6 +6857,20 @@ private fun ChatTab(
                             thinkingActive = thinkingActive,
                             elapsedSeconds = liveElapsedSeconds,
                             onRunInTerminal = onRunInTerminal,
+                            onOpenFile = onOpenFile,
+                        )
+                    }
+                }
+
+                if (changes.isNotEmpty()) {
+                    item(key = "live-code-changes-deck") {
+                        CodeChangesDiffDeck(
+                            changes = changes,
+                            onOpenFile = onOpenFile,
+                            onKeepAll = onKeepAllChanges,
+                            onUndoAll = onUndoAllChanges,
+                            onKeepFile = onKeepFileChange,
+                            onUndoFile = onUndoFileChange,
                         )
                     }
                 }
@@ -6931,8 +7005,24 @@ private fun ChatTab(
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
 
-                // Sleek Full-Screen Floating Capsule Composer (NO cramped bottom preview box!)
-                val composerAccent = if (isAntigravity) AntigravityBlue else MaterialTheme.colorScheme.primary
+                AntigravityMobileComposerStrip(
+                    isAntigravity = isAntigravity,
+                    activeAgentLabel = activeAgentLabel,
+                    activeModelLabel = activeModelLabel,
+                    antigravityEffort = antigravityEffort,
+                    gitBranch = gitBranch,
+                    totalAdditions = totalChatAdditions,
+                    totalDeletions = totalChatDeletions,
+                    changedFilesCount = changes.size,
+                    onOpenEngineSwitcher = onOpenEngineSwitcher,
+                    onSelectEffort = onSelectAntigravityEffort,
+                    onOpenCustomProvider = onOpenCustomProviderStudio,
+                    onOpenTermux = onOpenTerminalTab,
+                    onClickDiffBadge = onOpenChangesTab,
+                )
+
+                // Sleek Full-Screen Floating Capsule Composer (Pure Dark-Grey / Black!)
+                val composerAccent = if (isAntigravity) com.jarves.mh.ui.theme.EngineEmerald else MaterialTheme.colorScheme.primary
                 Surface(
                     shape = RoundedCornerShape(24.dp),
                     color = MaterialTheme.colorScheme.surface,
@@ -7689,84 +7779,35 @@ private fun formatFileSize(bytes: Long): String = when {
 @Composable
 private fun ChangesTab(
     changes: List<ChangeItem>,
+    onOpenFile: ((String) -> Unit)? = null,
     onUndo: () -> Unit,
     onKeep: () -> Unit,
     onUndoFile: (String) -> Unit,
     onKeepFile: (String) -> Unit,
 ) {
-    var expandedPath by rememberSaveable { mutableStateOf<String?>(null) }
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-            ) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-                    Text(stringResource(R.string.tab_changes), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(stringResource(R.string.ws_review_ai_changes), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (changes.isEmpty()) {
+            item {
+                EmptyState(
+                    Icons.Default.Code,
+                    stringResource(R.string.ws_no_changes_yet),
+                    stringResource(R.string.ws_no_changes_desc),
+                )
             }
-        }
-        if (changes.isEmpty()) item { EmptyState(Icons.Default.Code, stringResource(R.string.ws_no_changes_yet), stringResource(R.string.ws_no_changes_desc)) }
-        items(changes, key = { it.path }) { change ->
-            val expanded = expandedPath == change.path
-            Card(Modifier.fillMaxWidth()) {
-                Column {
-                    Row(
-                        Modifier.fillMaxWidth().clickable { expandedPath = if (expanded) null else change.path }.padding(15.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Default.Description, null)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(change.path, fontWeight = FontWeight.Medium, maxLines = 1)
-                            Text(
-                                if (expanded) stringResource(R.string.ws_hide_diff) else stringResource(R.string.ws_tap_review_diff),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Text("+${change.additions}", color = PocketGreen)
-                        Spacer(Modifier.width(7.dp))
-                        Text("-${change.deletions}", color = MaterialTheme.colorScheme.error)
-                    }
-                    if (expanded) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Column(
-                            Modifier.fillMaxWidth().background(Color(0xFF0B0E14)).horizontalScroll(rememberScrollState()),
-                        ) {
-                            change.diffLines.forEach { line -> DiffLineRow(line) }
-                        }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Row(
-                            Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    expandedPath = null
-                                    onUndoFile(change.path)
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) { Text(stringResource(R.string.ws_undo_file)) }
-                            Button(
-                                onClick = {
-                                    expandedPath = null
-                                    onKeepFile(change.path)
-                                },
-                                modifier = Modifier.weight(1f),
-                            ) { Text(stringResource(R.string.ws_keep_file)) }
-                        }
-                    }
-                }
-            }
-        }
-        if (changes.isNotEmpty()) item {
-            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedButton(onClick = onUndo, Modifier.weight(1f)) { Text(stringResource(R.string.ws_undo_task)) }
-                Button(onClick = onKeep, Modifier.weight(1f)) { Text(stringResource(R.string.chat_keep_changes)) }
+        } else {
+            item {
+                CodeChangesDiffDeck(
+                    changes = changes,
+                    onOpenFile = onOpenFile,
+                    onKeepAll = onKeep,
+                    onUndoAll = onUndo,
+                    onKeepFile = onKeepFile,
+                    onUndoFile = onUndoFile,
+                )
             }
         }
     }

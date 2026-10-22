@@ -430,7 +430,7 @@ class AntigravityRuntimeBridge(
                             ),
                         )
                     }
-                    delay(50)
+                    delay(16)
                     continue
                 }
                 val bytes = ByteArray(minOf(available, 16L * 1024).toInt())
