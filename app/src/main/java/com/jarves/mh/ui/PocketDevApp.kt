@@ -5167,7 +5167,16 @@ private fun WorkspaceScreen(
                     onToggleFullAccess = onSetFullAccessTerminal,
                     changes = state.changes,
                     gitBranch = if (state.gitStatus.initialized) state.gitStatus.branch else "",
-                    onOpenFile = onOpenFile,
+                    onOpenFile = { path ->
+                        onOpenFile(
+                            WorkspaceEntry(
+                                path = path,
+                                name = path.substringAfterLast('/'),
+                                isDirectory = false,
+                                depth = 0,
+                            ),
+                        )
+                    },
                     onKeepAllChanges = onKeepChanges,
                     onUndoAllChanges = onUndoChanges,
                     onKeepFileChange = onKeepFileChange,
@@ -5263,7 +5272,16 @@ private fun WorkspaceScreen(
                 )
                 WorkspaceTab.CHANGES -> ChangesTab(
                     changes = state.changes,
-                    onOpenFile = onOpenFile,
+                    onOpenFile = { path ->
+                        onOpenFile(
+                            WorkspaceEntry(
+                                path = path,
+                                name = path.substringAfterLast('/'),
+                                isDirectory = false,
+                                depth = 0,
+                            ),
+                        )
+                    },
                     onUndo = onUndoChanges,
                     onKeep = onKeepChanges,
                     onUndoFile = onUndoFileChange,
