@@ -250,8 +250,10 @@ import com.jarves.mh.runtime.AndroidLogLine
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
