@@ -300,7 +300,7 @@ class CsPersonalEngineUpgradeTest {
         assertTrue("On branch main" in restoredSnap.plainText)
 
         // 3. Dynamic viewport resize (`TIOCSWINSZ`)
-        emu.resize(rows = 40, cols = 100)
+        emu.resize(40, 100)
         val resized = emu.snapshot()
         assertEquals(40, resized.rows)
         assertEquals(100, resized.cols)
