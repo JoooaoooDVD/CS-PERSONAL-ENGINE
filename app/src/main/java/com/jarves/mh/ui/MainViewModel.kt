@@ -425,6 +425,7 @@ data class AppUiState(
     val activeToolHeadline: String? = null,
     val fullAccessTerminalEnabled: Boolean = true,
     val interactivePtyMode: Boolean = true,
+    val mcJavaXmlSpecialistEnabled: Boolean = true,
     val savedCustomProviders: List<SavedCustomProvider> = emptyList(),
     val activeCustomProviderId: String = "",
     val savedCustomClis: List<CliToolPackage> = emptyList(),
@@ -5120,6 +5121,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendLine("Global CLI paths `/root/.local/bin`, `/root/.npm-global/bin`, `/root/.bun/bin`, `/root/.cargo/bin`, and `/usr/local/bin` are active in PATH.")
                 append("</linux_full_root_capabilities>")
             }
+            if (snapshot.mcJavaXmlSpecialistEnabled) {
+                appendLine()
+                appendLine()
+                appendLine("<minecraft_launcher_java_xml_kotlin_specialist>")
+                appendLine(MinecraftLauncherKnowledge.buildSpecialistSystemBrief(requestText))
+                append("</minecraft_launcher_java_xml_kotlin_specialist>")
+            }
             if (snapshot.customSystemInstructions.isNotBlank()) {
                 appendLine()
                 appendLine()
@@ -6174,6 +6182,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updated = preferences.loadSavedCustomClis().filterNot { it.id == id }
         preferences.saveSavedCustomClis(updated)
         _state.update { it.copy(savedCustomClis = updated) }
+    }
+
+    fun setMcJavaXmlSpecialistEnabled(enabled: Boolean) {
+        _state.update {
+            it.copy(
+                mcJavaXmlSpecialistEnabled = enabled,
+                toastMessage = if (enabled) {
+                    "Minecraft Launcher + Java/XML/Kotlin Specialist Brain ON"
+                } else {
+                    "Minecraft Launcher Specialist Brain paused"
+                },
+            )
+        }
     }
 
     override fun onCleared() {

@@ -252,7 +252,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -508,6 +510,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onRestartProjectPty = viewModel::restartProjectPty,
             onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
             onRemoveCustomCli = viewModel::removeCustomCliPackage,
+            onSetMcJavaXmlSpecialist = viewModel::setMcJavaXmlSpecialistEnabled,
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -2498,50 +2501,50 @@ private fun RootScreenHost(
     viewModel: MainViewModel,
     projectsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
 ) {
-    var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
+    var activeNavId by rememberSaveable { mutableStateOf("PROJECTS") }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
     var showHomeCustomProvider by rememberSaveable { mutableStateOf(false) }
     var showHomeCliHub by rememberSaveable { mutableStateOf(false) }
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
     val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
     val terminalCurrentCommand by viewModel.terminalCurrentCommand.collectAsStateWithLifecycle()
 
-    Scaffold(
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        bottomBar = {
-            if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                RootScreen.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = screen == tab,
-                        onClick = { screen = tab },
-                        icon = { Icon(tab.icon, contentDescription = stringResource(tab.labelRes)) },
-                        label = { Text(stringResource(tab.labelRes), fontSize = 11.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                        ),
-                    )
+    val rootRailItems = listOf(
+        WidescreenRailItem("PROJECTS", "Spaces", RootScreen.PROJECTS.icon),
+        WidescreenRailItem("CONSOLE", "Console", Icons.Default.Terminal, accent = true),
+        WidescreenRailItem("AGENT", "Engines", RootScreen.AGENT.icon),
+        WidescreenRailItem("SETTINGS", "Config", RootScreen.SETTINGS.icon),
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF07090E)),
+    ) {
+        StudioWidescreenRail(
+            items = rootRailItems,
+            selectedId = if (showQuickTerminal) "CONSOLE" else activeNavId,
+            onSelect = { id ->
+                if (id == "CONSOLE") {
+                    activeNavId = "CONSOLE"
+                    showQuickTerminal = false
+                } else {
+                    showQuickTerminal = false
+                    activeNavId = id
                 }
-            }
-        },
-        floatingActionButton = {
-            if (screen == RootScreen.PROJECTS && !keyboardVisible && !showQuickTerminal) {
-                ExtendedFloatingActionButton(
-                    onClick = { showQuickTerminal = true },
-                    icon = { Icon(Icons.Default.Terminal, contentDescription = null) },
-                    text = { Text(stringResource(R.string.projects_terminal), fontWeight = FontWeight.SemiBold) },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                )
-            }
-        },
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (screen) {
-                RootScreen.PROJECTS -> ProjectsScreen(
+            },
+            isRunning = state.isRunning || isTerminalRunning,
+        )
+
+        StudioAnimatedPaneHost(
+            targetState = activeNavId,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+        ) { paneId ->
+            when (paneId) {
+                "PROJECTS" -> ProjectsScreen(
                     state = state,
                     listState = projectsListState,
                     onOpen = viewModel::openProject,
@@ -2557,15 +2560,50 @@ private fun RootScreenHost(
                     onCloneGitHub = viewModel::cloneGitHubRepository,
                     onRenameProject = viewModel::renameProject,
                     onDeleteProject = viewModel::deleteProject,
-                    onSettings = { screen = RootScreen.SETTINGS },
+                    onSettings = { activeNavId = "SETTINGS" },
                     onPing = viewModel::pingApi,
                     onToggleTheme = viewModel::toggleTheme,
                     onInstallUpdate = viewModel::installAppUpdate,
-                    onOpenAgentHub = { screen = RootScreen.AGENT },
+                    onOpenAgentHub = { activeNavId = "AGENT" },
                     onOpenCustomProvider = { showHomeCustomProvider = true },
                     onOpenCliHub = { showHomeCliHub = true },
+                    onOpenQuickConsole = { activeNavId = "CONSOLE" },
                 )
-                RootScreen.AGENT -> AgentScreen(
+                "CONSOLE" -> TerminalScreen(
+                    lines = terminalLines,
+                    isRunning = isTerminalRunning,
+                    onRun = viewModel::runTerminalCommand,
+                    onInput = viewModel::sendTerminalInput,
+                    onInterrupt = viewModel::interruptTerminalCommand,
+                    onClear = viewModel::clearTerminal,
+                    onToggleTheme = viewModel::toggleTheme,
+                    themeMode = state.themeMode,
+                    liveOutput = terminalLiveOutput,
+                    currentCommand = terminalCurrentCommand,
+                    showThemeAction = false,
+                    showQuickCommands = true,
+                    compactHeader = true,
+                    interactivePtyMode = state.interactivePtyMode,
+                    onTogglePtyMode = viewModel::setInteractivePtyMode,
+                    ptyBuffer = state.ptyTerminalBuffer,
+                    ptySnapshot = state.ptySnapshot,
+                    ptyAlive = state.ptyTerminalAlive,
+                    sessionTabs = state.ptySessionTabs,
+                    activeSessionTabId = state.activePtySessionId,
+                    onSelectSessionTab = viewModel::selectQuickPtyTab,
+                    onNewSessionTab = viewModel::newQuickPtyTab,
+                    onCloseSessionTab = viewModel::closeQuickPtyTab,
+                    onEnsurePtyStarted = viewModel::ensureQuickPtyStarted,
+                    onSendPtyCommand = viewModel::sendQuickPtyCommand,
+                    onSendPtyRaw = viewModel::sendQuickPtyRaw,
+                    onPastePty = viewModel::pasteQuickPty,
+                    onResizePty = viewModel::resizeQuickPty,
+                    onInterruptPty = viewModel::interruptQuickPty,
+                    onClearPty = viewModel::clearQuickPty,
+                    onRestartPty = viewModel::restartQuickPty,
+                    onOpenCliHub = { showHomeCliHub = true },
+                )
+                "AGENT" -> AgentScreen(
                     state = state,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
@@ -2593,7 +2631,7 @@ private fun RootScreenHost(
                     onDeleteCustomProvider = viewModel::deleteCustomProvider,
                     getCustomProviderApiKey = viewModel::getCustomProviderApiKey,
                     onRunCliInTerminal = { cliCmd ->
-                        showQuickTerminal = true
+                        activeNavId = "CONSOLE"
                         if (state.interactivePtyMode) {
                             viewModel.sendQuickPtyCommand(cliCmd)
                         } else {
@@ -2604,7 +2642,7 @@ private fun RootScreenHost(
                     onRemoveCustomCli = viewModel::removeCustomCliPackage,
                     onSetFullAccessTerminal = viewModel::setFullAccessTerminalEnabled,
                 )
-                RootScreen.SETTINGS -> SettingsScreen(
+                else -> SettingsScreen(
                     state = state,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
@@ -2663,7 +2701,7 @@ private fun RootScreenHost(
         CliMarketplaceSheet(
             savedCustomClis = state.savedCustomClis,
             onRunCommandInTerminal = { cmd ->
-                showQuickTerminal = true
+                activeNavId = "CONSOLE"
                 if (state.interactivePtyMode) viewModel.sendQuickPtyCommand(cmd)
                 else viewModel.runTerminalCommand(cmd)
             },
@@ -2673,7 +2711,6 @@ private fun RootScreenHost(
         )
     }
     if (showQuickTerminal) {
-        var showQuickCliHub by rememberSaveable { mutableStateOf(false) }
         FullScreenTermuxOverlay(
             onDismiss = { showQuickTerminal = false },
         ) {
@@ -2709,19 +2746,8 @@ private fun RootScreenHost(
                 onInterruptPty = viewModel::interruptQuickPty,
                 onClearPty = viewModel::clearQuickPty,
                 onRestartPty = viewModel::restartQuickPty,
-                onOpenCliHub = { showQuickCliHub = true },
+                onOpenCliHub = { showHomeCliHub = true },
                 onCloseFullScreen = { showQuickTerminal = false },
-            )
-        }
-        if (showQuickCliHub) {
-            CliMarketplaceSheet(
-                savedCustomClis = state.savedCustomClis,
-                onRunCommandInTerminal = { cmd ->
-                    viewModel.sendQuickPtyCommand(cmd)
-                },
-                onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
-                onRemoveCustomCli = viewModel::removeCustomCliPackage,
-                onDismiss = { showQuickCliHub = false },
             )
         }
     }
@@ -3621,6 +3647,7 @@ private fun ProjectsScreen(
     onOpenAgentHub: () -> Unit = {},
     onOpenCustomProvider: () -> Unit = {},
     onOpenCliHub: () -> Unit = {},
+    onOpenQuickConsole: () -> Unit = {},
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
@@ -3643,45 +3670,70 @@ private fun ProjectsScreen(
         if (state.appUpdate != null) showUpdateDialog = true
     }
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                modifier = Modifier.padding(top = 8.dp),
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (state.agentKind == AgentKind.ANTIGRAVITY) {
-                            AntigravitySparkMark(size = 24.dp)
-                        } else {
-                            BrandMark(compact = true)
-                        }
-                        Spacer(Modifier.width(9.dp))
-                        Column {
-                            Text("CS Personal Engine", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+            Surface(
+                color = Color(0xFF0A0D14),
+                modifier = Modifier.fillMaxWidth().statusBarsPadding(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        VoxelPrismBrandMark(size = 26.dp, isRunning = state.isRunning)
+                        Text("CS Personal Engine", fontWeight = FontWeight.ExtraBold, fontSize = 15.5.sp)
+                        Surface(
+                            shape = CircleShape,
+                            color = EngineEmerald.copy(alpha = 0.14f),
+                            border = BorderStroke(0.8.dp, EngineEmerald.copy(alpha = 0.45f)),
+                        ) {
                             Text(
-                                if (state.agentKind == AgentKind.ANTIGRAVITY) "Antigravity Mobile IDE · Termux Root"
-                                else "Obsidian Mobile IDE · Termux Root",
-                                fontSize = 10.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = "v5.0 WIDESCREEN · JAVA / XML / KT + MC",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = EngineEmerald,
                             )
                         }
                     }
-                },
-                actions = {
-                    IconButton(onClick = onToggleTheme) {
-                        Icon(
-                            if (state.themeMode == AppThemeMode.DARK || state.themeMode == AppThemeMode.AMOLED) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = stringResource(R.string.theme_toggle),
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Surface(
+                            onClick = onOpenQuickConsole,
+                            shape = RoundedCornerShape(9.dp),
+                            color = Color(0xFF121824),
+                            border = BorderStroke(0.9.dp, EngineCyan.copy(alpha = 0.45f)),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                Icon(Icons.Default.Terminal, null, tint = EngineCyan, modifier = Modifier.size(13.dp))
+                                Text("Live Console", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = EngineCyan)
+                            }
+                        }
+                        IconButton(onClick = onToggleTheme, modifier = Modifier.size(32.dp)) {
+                            Icon(
+                                if (state.themeMode == AppThemeMode.DARK || state.themeMode == AppThemeMode.AMOLED) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = stringResource(R.string.theme_toggle),
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
+                }
+            }
         },
     ) { padding ->
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
                 val isAgy = state.agentKind == AgentKind.ANTIGRAVITY
@@ -3693,105 +3745,121 @@ private fun ProjectsScreen(
                     activeCustom != null -> "${activeCustom.name} · ${activeCustom.model}"
                     else -> "${state.agentKind.localizedTitle()} · ${state.provider.model.ifBlank { state.provider.kind.localizedTitle() }}"
                 }
-                // v3.0 Command Strip: Engine Status + "+ Custom Provider" + "CLI Hub"
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(bottom = 10.dp),
+                        .padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Surface(
                         modifier = Modifier.clickable(onClick = onOpenAgentHub),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.42f)),
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            if (isAgy) AntigravitySparkMark(size = 14.dp) else AnimatedEngineOrb(isRunning = false, size = 14.dp)
-                            Text(engineLabel, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            if (isAgy) AntigravitySparkMark(size = 13.dp) else AnimatedEngineOrb(isRunning = false, size = 13.dp)
+                            Text(engineLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         }
                     }
                     Surface(
                         modifier = Modifier.clickable(onClick = onOpenCustomProvider),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = EngineCyan.copy(alpha = 0.12f),
                         border = BorderStroke(1.dp, EngineCyan.copy(alpha = 0.42f)),
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            Icon(Icons.Default.Add, null, tint = EngineCyan, modifier = Modifier.size(14.dp))
-                            Text("Custom Provider", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = EngineCyan)
+                            Icon(Icons.Default.Add, null, tint = EngineCyan, modifier = Modifier.size(13.dp))
+                            Text("Custom Provider", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = EngineCyan)
                         }
                     }
                     Surface(
                         modifier = Modifier.clickable(onClick = onOpenCliHub),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = EngineEmerald.copy(alpha = 0.12f),
                         border = BorderStroke(1.dp, EngineEmerald.copy(alpha = 0.42f)),
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp),
                         ) {
-                            Icon(Icons.Default.Terminal, null, tint = EngineEmerald, modifier = Modifier.size(14.dp))
-                            Text("CLI Hub", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = EngineEmerald)
+                            Icon(Icons.Default.Terminal, null, tint = EngineEmerald, modifier = Modifier.size(13.dp))
+                            Text("CLI Hub", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = EngineEmerald)
                         }
                     }
                 }
-                Text(stringResource(R.string.projects_hero_title), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text(stringResource(R.string.projects_hero_desc), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Button(
+                        onClick = { onCreate("MC-Launcher-Studio") },
+                        modifier = Modifier.weight(1.15f).height(42.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text(
+                            text = "MC Launcher (Java+XML)",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                    Button(
                         onClick = onCreateQuickProject,
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(0.95f).height(42.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Chat,
                             contentDescription = null,
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(16.dp),
                         )
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(5.dp))
                         Text(
                             text = stringResource(R.string.projects_quick_project),
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             maxLines = 1,
                             softWrap = false,
                         )
                     }
                     OutlinedButton(
                         onClick = { showCreate = true },
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.weight(0.85f).height(42.dp),
+                        shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                            modifier = Modifier.size(16.dp),
                         )
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(5.dp))
                         Text(
                             text = stringResource(R.string.projects_new_project),
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             maxLines = 1,
                             softWrap = false,
                         )
@@ -4604,17 +4672,21 @@ private fun WorkspaceScreen(
     onRestartProjectPty: () -> Unit = {},
     onAddCustomCli: (String, String, String) -> Unit = { _, _, _ -> },
     onRemoveCustomCli: (String) -> Unit = {},
+    onSetMcJavaXmlSpecialist: (Boolean) -> Unit = {},
 ) {
     var showGitStudio by rememberSaveable { mutableStateOf(false) }
     var showQuickEngineSheet by rememberSaveable { mutableStateOf(false) }
     var showCustomProviderStudio by rememberSaveable { mutableStateOf(false) }
     var editingCustomProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     var showWorkspaceCliHub by rememberSaveable { mutableStateOf(false) }
-    var terminalFullScreen by rememberSaveable { mutableStateOf(true) }
-    var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
+    var terminalFullScreen by rememberSaveable { mutableStateOf(false) }
+    var studioMode by rememberSaveable { mutableStateOf("STUDIO") }
+    var splitRightPane by rememberSaveable { mutableStateOf("CONSOLE") }
     BackHandler {
-        if (selectedTab == WorkspaceTab.TERMINAL && terminalFullScreen) {
-            selectedTab = WorkspaceTab.CHAT
+        if (studioMode == "CONSOLE" && terminalFullScreen) {
+            terminalFullScreen = false
+        } else if (studioMode != "STUDIO") {
+            studioMode = "STUDIO"
         } else {
             onBack()
         }
@@ -4812,12 +4884,12 @@ private fun WorkspaceScreen(
             onCreate = {
                 onCreateChat()
                 showChats = false
-                selectedTab = WorkspaceTab.CHAT
+                if (studioMode != "SPLIT") studioMode = "STUDIO"
             },
             onSwitch = { chatId ->
                 onSwitchChat(chatId)
                 showChats = false
-                selectedTab = WorkspaceTab.CHAT
+                if (studioMode != "SPLIT") studioMode = "STUDIO"
             },
         )
     }
@@ -4899,7 +4971,8 @@ private fun WorkspaceScreen(
         CliMarketplaceSheet(
             savedCustomClis = state.savedCustomClis,
             onRunCommandInTerminal = { cliCmd ->
-                selectedTab = WorkspaceTab.TERMINAL
+                if (studioMode != "SPLIT") studioMode = "CONSOLE"
+                else splitRightPane = "CONSOLE"
                 onTerminalOpened()
                 if (state.interactivePtyMode) {
                     onSendProjectPtyCommand(cliCmd)
@@ -4915,379 +4988,504 @@ private fun WorkspaceScreen(
 
     val totalWorkspaceAdditions = remember(state.changes) { state.changes.sumOf { it.additions } }
     val totalWorkspaceDeletions = remember(state.changes) { state.changes.sumOf { it.deletions } }
-    val isFullScreenTerminalActive = selectedTab == WorkspaceTab.TERMINAL && terminalFullScreen
+    val isImmersiveConsole = studioMode == "CONSOLE" && terminalFullScreen
 
-    Scaffold(
-        containerColor = if (isFullScreenTerminalActive) Color(0xFF000000) else MaterialTheme.colorScheme.background,
-        topBar = {
-            if (!isFullScreenTerminalActive) {
+    val renderChatPane: @Composable () -> Unit = {
+        ChatTab(
+            state.messages,
+            state.pendingApproval,
+            state.liveProcess,
+            state.isRunning,
+            onSend,
+            onStop,
+            onApproval,
+            listState = chatListState,
+            taskStartedAtMillis = state.workSegmentStartedAtMillis ?: state.taskStartedAtMillis,
+            taskFinishedAtMillis = state.taskFinishedAtMillis,
+            thinkingActive = state.liveThinking,
+            agentKind = state.agentKind,
+            pendingAttachments = state.pendingAttachments,
+            onAttach = {
+                attachmentLauncher.launch(arrayOf("image/*", "text/*", "application/json", "application/xml"))
+            },
+            onTakePhoto = {
+                runCatching {
+                    val uri = createCameraPhotoUri(context)
+                    pendingPhotoUri = uri.toString()
+                    takePhotoLauncher.launch(uri)
+                }.onFailure {
+                    pendingPhotoUri = null
+                    Toast.makeText(context, context.getString(R.string.chat_camera_unavailable), Toast.LENGTH_LONG).show()
+                }
+            },
+            onRemoveAttachment = onRemoveAttachment,
+            onOpenAttachment = onOpenAttachment,
+            onRunInTerminal = { command ->
+                if (studioMode == "SPLIT") splitRightPane = "CONSOLE" else studioMode = "CONSOLE"
+                onTerminalOpened()
+                onSendProjectPtyCommand(command)
+            },
+            queuedFollowUps = state.queuedFollowUps,
+            onSteerFollowUp = onSteerFollowUp,
+            onRemoveFollowUp = onRemoveFollowUp,
+            activeToolSummary = state.activeToolHeadline,
+            streamingPreview = state.streamingAssistantPreview,
+            liveStreamExpanded = state.liveStreamExpanded,
+            onToggleLiveStreamExpanded = onToggleLiveStreamExpanded,
+            autoContextEnabled = state.autoContextEnabled,
+            onToggleAutoContext = onSetAutoContextEnabled,
+            autoRunCommands = state.autoRunChatCommands,
+            onToggleAutoRunCommands = onSetAutoRunChatCommands,
+            detectedServerPorts = state.detectedServerPorts,
+            onOpenServerPort = { port ->
+                onOpenServerPort(port)
+                studioMode = "WEB"
+            },
+            onOpenTerminalTab = {
+                if (studioMode == "SPLIT") splitRightPane = "CONSOLE" else studioMode = "CONSOLE"
+                onTerminalOpened()
+            },
+            projectName = state.activeProject?.name ?: "Workspace",
+            activeAgentLabel = headerAgentLabel,
+            activeModelLabel = headerModelLabel,
+            antigravityEffort = state.antigravityEffort,
+            fullAccessEnabled = state.fullAccessTerminalEnabled,
+            onOpenEngineSwitcher = { showQuickEngineSheet = true },
+            onOpenCustomProviderStudio = {
+                editingCustomProviderId = null
+                showCustomProviderStudio = true
+            },
+            onOpenCliStore = { showWorkspaceCliHub = true },
+            onSelectAntigravityEffort = onSetAntigravityEffort,
+            onToggleFullAccess = onSetFullAccessTerminal,
+            changes = state.changes,
+            gitBranch = if (state.gitStatus.initialized) state.gitStatus.branch else "",
+            onOpenFile = { path ->
+                onOpenFile(
+                    WorkspaceEntry(
+                        path = path,
+                        name = path.substringAfterLast('/'),
+                        isDirectory = false,
+                        depth = 0,
+                    ),
+                )
+            },
+            onKeepAllChanges = onKeepChanges,
+            onUndoAllChanges = onUndoChanges,
+            onKeepFileChange = onKeepFileChange,
+            onUndoFileChange = onUndoFileChange,
+            onOpenChangesTab = {
+                if (studioMode == "SPLIT") splitRightPane = "DIFFS" else studioMode = "DIFFS"
+            },
+        )
+    }
+
+    val renderFilesPane: @Composable () -> Unit = {
+        FilesTab(
+            files = state.workspaceFiles,
+            loading = state.filesLoading,
+            suggestedProjectRoot = state.suggestedProjectRoot,
+            onRefresh = onRefreshFiles,
+            onLoadDirectory = onLoadProjectDirectory,
+            onOpenFile = onOpenFile,
+            onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
+            selectionMode = exportSelectionMode,
+            exportSelection = exportSelection,
+            exportRunning = state.projectExportRunning,
+            exportEnabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
+            onEnterSelection = {
+                exportSelection = ExportSelection()
+                exportSelectionMode = true
+            },
+            onCancelSelection = {
+                exportSelectionMode = false
+                exportSelection = ExportSelection()
+            },
+            onToggleSelection = { entry -> exportSelection = exportSelection.toggled(entry.path, entry.isDirectory) },
+            onSelectAll = { exportSelection = ExportSelection() },
+            onDownloadSelection = {
+                exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
+            },
+            fileOpsEnabled = !state.isRunning && !state.projectTerminalRunning &&
+                !state.androidBuildRunning && !state.projectExportRunning,
+            onCreateEntry = onCreateWorkspaceEntry,
+            onRenameEntry = onRenameWorkspaceEntry,
+            onDeleteEntry = onDeleteWorkspaceEntry,
+            onUploadInto = { parent ->
+                pendingUploadParent = parent
+                uploadLauncher.launch(arrayOf("*/*"))
+            },
+            onShareFile = onShareWorkspaceFile,
+            onSaveFileCopy = { path ->
+                pendingCopyPath = path
+                saveCopyLauncher.launch(path.substringAfterLast('/'))
+            },
+        )
+    }
+
+    val renderConsolePane: @Composable (Boolean) -> Unit = { allowFullToggle ->
+        TerminalScreen(
+            lines = state.projectTerminalLines,
+            isRunning = state.projectTerminalRunning,
+            onRun = onTerminalRun,
+            onInput = onTerminalInput,
+            onInterrupt = onTerminalInterrupt,
+            onClear = onTerminalClear,
+            onToggleTheme = {},
+            themeMode = state.themeMode,
+            title = stringResource(R.string.workspace_project_terminal),
+            subtitle = "${state.projectTerminalCwd} · Full Root Ubuntu PRoot",
+            liveOutput = state.projectTerminalLiveOutput,
+            currentCommand = state.projectTerminalCommand,
+            commandDraft = state.projectTerminalDraft,
+            onCommandDraftConsumed = onTerminalDraftConsumed,
+            promptPath = state.projectTerminalCwd,
+            onStop = onTerminalStop,
+            onFixWithAi = { cmd, out, code ->
+                if (studioMode != "SPLIT") studioMode = "STUDIO"
+                onFixTerminalFailure(cmd, out, code)
+            },
+            showThemeAction = false,
+            showQuickCommands = true,
+            compactHeader = !isImmersiveConsole,
+            interactivePtyMode = state.interactivePtyMode,
+            onTogglePtyMode = onSetInteractivePtyMode,
+            ptyBuffer = state.projectPtyTerminalBuffer,
+            ptySnapshot = state.projectPtySnapshot,
+            ptyAlive = state.projectPtyTerminalAlive,
+            sessionTabs = state.projectPtySessionTabs,
+            activeSessionTabId = state.activeProjectPtySessionId,
+            onSelectSessionTab = onSelectProjectPtyTab,
+            onNewSessionTab = onNewProjectPtyTab,
+            onCloseSessionTab = onCloseProjectPtyTab,
+            onEnsurePtyStarted = onEnsureProjectPtyStarted,
+            onSendPtyCommand = onSendProjectPtyCommand,
+            onSendPtyRaw = onSendProjectPtyRaw,
+            onPastePty = onPasteProjectPty,
+            onResizePty = onResizeProjectPty,
+            onInterruptPty = onInterruptProjectPty,
+            onClearPty = onClearProjectPty,
+            onRestartPty = onRestartProjectPty,
+            onOpenCliHub = { showWorkspaceCliHub = true },
+            onCloseFullScreen = if (isImmersiveConsole) ({ terminalFullScreen = false }) else null,
+            isImmersiveFullScreen = isImmersiveConsole,
+            onToggleImmersiveFullScreen = if (allowFullToggle) ({ terminalFullScreen = !terminalFullScreen }) else null,
+        )
+    }
+
+    val renderDiffsPane: @Composable () -> Unit = {
+        ChangesTab(
+            changes = state.changes,
+            onOpenFile = { path ->
+                onOpenFile(
+                    WorkspaceEntry(
+                        path = path,
+                        name = path.substringAfterLast('/'),
+                        isDirectory = false,
+                        depth = 0,
+                    ),
+                )
+            },
+            onUndo = onUndoChanges,
+            onKeep = onKeepChanges,
+            onUndoFile = onUndoFileChange,
+            onKeepFile = onKeepFileChange,
+        )
+    }
+
+    val renderMcKitPane: @Composable () -> Unit = {
+        MinecraftLauncherStudioDeck(
+            specialistBrainEnabled = state.mcJavaXmlSpecialistEnabled,
+            onToggleSpecialistBrain = onSetMcJavaXmlSpecialist,
+            onRunBlueprintPrompt = { promptText ->
+                if (studioMode != "SPLIT") studioMode = "STUDIO"
+                onSend(promptText)
+            },
+            onOpenTerminalCommand = { cmd ->
+                if (studioMode == "SPLIT") splitRightPane = "CONSOLE" else studioMode = "CONSOLE"
+                onTerminalOpened()
+                onSendProjectPtyCommand(cmd)
+            },
+        )
+    }
+
+    if (isImmersiveConsole) {
+        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF06080C))) {
+            renderConsolePane(true)
+        }
+        return
+    }
+
+    val ideRailItems = listOf(
+        WidescreenRailItem("STUDIO", "Studio", WorkspaceTab.CHAT.icon),
+        WidescreenRailItem("SPLIT", "Split IDE", Icons.Default.DashboardCustomize, accent = true),
+        WidescreenRailItem("CONSOLE", "Console", WorkspaceTab.TERMINAL.icon, accent = true),
+        WidescreenRailItem("FILES", "Files", WorkspaceTab.FILES.icon),
+        WidescreenRailItem(
+            id = "DIFFS",
+            label = "Diffs",
+            icon = WorkspaceTab.CHANGES.icon,
+            badge = if (state.changes.isNotEmpty()) "+$totalWorkspaceAdditions" else null,
+        ),
+        WidescreenRailItem("MC_KIT", "MC Kit", Icons.Default.Bolt, accent = true),
+        WidescreenRailItem("WEB", "Preview", WorkspaceTab.PREVIEW.icon),
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF07090E)),
+    ) {
+        StudioWidescreenRail(
+            items = ideRailItems,
+            selectedId = studioMode,
+            onSelect = { id ->
+                studioMode = id
+                if (id == "FILES") onRefreshFiles()
+                if (id == "CONSOLE" || (id == "SPLIT" && splitRightPane == "CONSOLE")) onTerminalOpened()
+            },
+            isRunning = state.isRunning || state.projectTerminalRunning,
+            topSlot = {
                 Surface(
-                    color = MaterialTheme.colorScheme.background,
-                    modifier = Modifier.fillMaxWidth().statusBarsPadding(),
+                    onClick = onBack,
+                    modifier = Modifier.size(32.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF121722),
+                    border = BorderStroke(0.9.dp, Color(0xFF232C3D)),
                 ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        // Row 1: Unified IDE Project & Engine/Model Header (Pure Dark-Grey / Black!)
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 6.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.tab_projects),
+                            tint = Color(0xFFE2E8F0),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            },
+        )
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
+            // ── Ultra-Slim 36dp Single-Row Horizontal Widescreen Telemetry Header ──
+            Surface(
+                color = Color(0xFF0A0E16),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    VoxelPrismBrandMark(size = 20.dp, isRunning = state.isRunning)
+
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { showQuickEngineSheet = true },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = state.activeProject?.name.orEmpty(),
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 13.5.sp,
+                            color = Color(0xFFF8FAFC),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text("·", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "$headerAgentLabel · $headerModelLabel",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isAntigravityActive) EngineEmerald else EngineCyan,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+
+                    // Active Java / XML / Kotlin + Minecraft Launcher Brain Pill!
+                    Surface(
+                        onClick = { studioMode = "MC_KIT" },
+                        shape = CircleShape,
+                        color = if (state.mcJavaXmlSpecialistEnabled) EngineEmerald.copy(alpha = 0.14f) else Color(0xFF141923),
+                        border = BorderStroke(
+                            0.8.dp,
+                            if (state.mcJavaXmlSpecialistEnabled) EngineEmerald.copy(alpha = 0.55f) else Color(0xFF253042),
+                        ),
+                    ) {
+                        Text(
+                            text = if (state.mcJavaXmlSpecialistEnabled) "⚡ Java·XML·KT + MC" else "Java·XML·KT Off",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (state.mcJavaXmlSpecialistEnabled) EngineEmerald else Color(0xFF94A3B8),
+                        )
+                    }
+
+                    if (state.changes.isNotEmpty()) {
+                        Surface(
+                            onClick = {
+                                if (studioMode == "SPLIT") splitRightPane = "DIFFS" else studioMode = "DIFFS"
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFF0E1814),
+                            border = BorderStroke(0.9.dp, EngineEmerald.copy(alpha = 0.45f)),
                         ) {
-                            IconButton(onClick = onBack, modifier = Modifier.size(38.dp)) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.tab_projects), modifier = Modifier.size(20.dp))
-                            }
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { showQuickEngineSheet = true }
-                                    .padding(horizontal = 4.dp),
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    state.activeProject?.name.orEmpty(),
+                                    "+$totalWorkspaceAdditions",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 15.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                    color = EngineEmerald,
                                 )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                ) {
-                                    if (isAntigravityActive) {
-                                        AntigravitySparkMark(isRunning = state.isRunning, size = 12.dp)
-                                    } else {
-                                        AnimatedEngineOrb(isRunning = state.isRunning, size = 11.dp)
-                                    }
-                                    Text(
-                                        text = "$headerAgentLabel · $headerModelLabel",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isAntigravityActive) com.jarves.mh.ui.theme.EngineEmerald else MaterialTheme.colorScheme.primary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                            }
-
-                            Surface(
-                                modifier = Modifier
-                                    .padding(end = 4.dp)
-                                    .enginePressScale {
-                                        onRefreshGitStatus()
-                                        showGitStudio = true
-                                    },
-                                shape = RoundedCornerShape(10.dp),
-                                color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
-                                ),
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    Icon(
-                                        Icons.Default.CloudUpload,
-                                        contentDescription = "Git & GitHub Push",
-                                        modifier = Modifier.size(14.dp),
-                                        tint = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    Text(
-                                        text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (state.gitStatus.hasChanges) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                            if (isAndroidProject) {
-                                IconButton(
-                                    onClick = { showAndroidBuild = true },
-                                    enabled = !state.isRunning && !state.projectTerminalRunning,
-                                    modifier = Modifier.size(36.dp),
-                                ) {
-                                    if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                    else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android), modifier = Modifier.size(20.dp))
-                                }
-                            }
-                            IconButton(onClick = { showChats = true }, modifier = Modifier.size(36.dp)) {
-                                Icon(Icons.Default.History, stringResource(R.string.ws_project_chats), modifier = Modifier.size(19.dp))
+                                Text(
+                                    "-$totalWorkspaceDeletions",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Color(0xFFFF7B72),
+                                )
                             }
                         }
+                    }
 
-                        // Row 2: Sleek Mobile IDE Mode Strip (Chat · Files · Termux · Diffs +A/-D · Web)
+                    Surface(
+                        onClick = {
+                            onRefreshGitStatus()
+                            showGitStudio = true
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF121824),
+                        border = BorderStroke(0.8.dp, Color(0xFF232E42)),
+                    ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            WorkspaceTab.entries.forEach { tab ->
-                                val selected = selectedTab == tab
-                                val activeColor = if (isAntigravityActive) com.jarves.mh.ui.theme.EngineEmerald else MaterialTheme.colorScheme.primary
-                                val tabLabel = when {
-                                    tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() ->
-                                        "+$totalWorkspaceAdditions -$totalWorkspaceDeletions"
-                                    tab == WorkspaceTab.CHANGES -> "Diffs"
-                                    tab == WorkspaceTab.TERMINAL -> "Termux"
-                                    else -> stringResource(tab.labelRes)
-                                }
-                                Surface(
-                                    modifier = Modifier
-                                        .weight(if (tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty()) 1.25f else 1f)
-                                        .clickable {
-                                            selectedTab = tab
-                                            if (tab == WorkspaceTab.FILES) onRefreshFiles()
-                                            if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
-                                        },
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (selected) activeColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                                    border = BorderStroke(
-                                        1.dp,
-                                        when {
-                                            selected -> activeColor.copy(alpha = 0.6f)
-                                            tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() -> com.jarves.mh.ui.theme.EngineEmerald.copy(alpha = 0.42f)
-                                            else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-                                        },
-                                    ),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(vertical = 6.5.dp, horizontal = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center,
-                                    ) {
-                                        Icon(
-                                            tab.icon,
-                                            contentDescription = tabLabel,
-                                            modifier = Modifier.size(13.dp),
-                                            tint = when {
-                                                selected -> activeColor
-                                                tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() -> com.jarves.mh.ui.theme.EngineEmerald
-                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text(
-                                            text = tabLabel,
-                                            fontSize = 10.5.sp,
-                                            fontFamily = if (tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty()) FontFamily.Monospace else FontFamily.Default,
-                                            fontWeight = if (selected || (tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty())) FontWeight.ExtraBold else FontWeight.Medium,
-                                            color = when {
-                                                selected -> activeColor
-                                                tab == WorkspaceTab.CHANGES && state.changes.isNotEmpty() -> com.jarves.mh.ui.theme.EngineEmerald
-                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                            maxLines = 1,
-                                        )
-                                    }
-                                }
-                            }
+                            Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(12.dp), tint = EngineCyan)
+                            Text(
+                                text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFE2E8F0),
+                            )
                         }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                    }
+
+                    if (isAndroidProject) {
+                        IconButton(
+                            onClick = { showAndroidBuild = true },
+                            enabled = !state.isRunning && !state.projectTerminalRunning,
+                            modifier = Modifier.size(28.dp),
+                        ) {
+                            if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android), tint = EngineEmerald, modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    IconButton(onClick = { showChats = true }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.History, stringResource(R.string.ws_project_chats), tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
                     }
                 }
             }
-        },
-    ) { padding ->
-        val bodyModifier = if (isFullScreenTerminalActive) {
-            Modifier.fillMaxSize().padding(padding)
-        } else {
-            Modifier.fillMaxSize().padding(padding).navigationBarsPadding()
-        }
-        Box(bodyModifier) {
-            when (selectedTab) {
-                WorkspaceTab.CHAT -> ChatTab(
-                    state.messages,
-                    state.pendingApproval,
-                    state.liveProcess,
-                    state.isRunning,
-                    onSend,
-                    onStop,
-                    onApproval,
-                    listState = chatListState,
-                    taskStartedAtMillis = state.workSegmentStartedAtMillis ?: state.taskStartedAtMillis,
-                    taskFinishedAtMillis = state.taskFinishedAtMillis,
-                    thinkingActive = state.liveThinking,
-                    agentKind = state.agentKind,
-                    pendingAttachments = state.pendingAttachments,
-                    onAttach = {
-                        attachmentLauncher.launch(arrayOf("image/*", "text/*", "application/json", "application/xml"))
-                    },
-                    onTakePhoto = {
-                        runCatching {
-                            val uri = createCameraPhotoUri(context)
-                            pendingPhotoUri = uri.toString()
-                            takePhotoLauncher.launch(uri)
-                        }.onFailure {
-                            pendingPhotoUri = null
-                            Toast.makeText(context, context.getString(R.string.chat_camera_unavailable), Toast.LENGTH_LONG).show()
+            HorizontalDivider(color = Color(0xFF182030), thickness = 0.6.dp)
+
+            // ── Animated Horizontal Widescreen Workspace Stage ──
+            StudioAnimatedPaneHost(
+                targetState = studioMode,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) { mode ->
+                when (mode) {
+                    "STUDIO" -> renderChatPane()
+                    "SPLIT" -> {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.weight(0.51f).fillMaxHeight()) {
+                                renderChatPane()
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .width(1.dp)
+                                    .fillMaxHeight()
+                                    .background(Color(0xFF1A2233)),
+                            )
+                            Column(modifier = Modifier.weight(0.49f).fillMaxHeight()) {
+                                Surface(
+                                    color = Color(0xFF0B0F17),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(29.dp)
+                                            .padding(horizontal = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    ) {
+                                        listOf(
+                                            "CONSOLE" to ">_ Console",
+                                            "FILES" to "Files",
+                                            "DIFFS" to "Diffs",
+                                            "MC_KIT" to "⚡ MC Kit",
+                                        ).forEach { (paneKey, label) ->
+                                            val active = splitRightPane == paneKey
+                                            Surface(
+                                                onClick = {
+                                                    splitRightPane = paneKey
+                                                    if (paneKey == "FILES") onRefreshFiles()
+                                                    if (paneKey == "CONSOLE") onTerminalOpened()
+                                                },
+                                                shape = RoundedCornerShape(7.dp),
+                                                color = if (active) EngineEmerald.copy(alpha = 0.16f) else Color.Transparent,
+                                                border = if (active) BorderStroke(0.8.dp, EngineEmerald.copy(alpha = 0.55f)) else null,
+                                            ) {
+                                                Text(
+                                                    text = label,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Medium,
+                                                    color = if (active) EngineEmerald else Color(0xFF94A3B8),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                HorizontalDivider(color = Color(0xFF182030), thickness = 0.6.dp)
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    when (splitRightPane) {
+                                        "FILES" -> renderFilesPane()
+                                        "DIFFS" -> renderDiffsPane()
+                                        "MC_KIT" -> renderMcKitPane()
+                                        else -> renderConsolePane(false)
+                                    }
+                                }
+                            }
                         }
-                    },
-                    onRemoveAttachment = onRemoveAttachment,
-                    onOpenAttachment = onOpenAttachment,
-                    onRunInTerminal = { command ->
-                        selectedTab = WorkspaceTab.TERMINAL
-                        onTerminalOpened()
-                        onSendProjectPtyCommand(command)
-                    },
-                    queuedFollowUps = state.queuedFollowUps,
-                    onSteerFollowUp = onSteerFollowUp,
-                    onRemoveFollowUp = onRemoveFollowUp,
-                    activeToolSummary = state.activeToolHeadline,
-                    streamingPreview = state.streamingAssistantPreview,
-                    liveStreamExpanded = state.liveStreamExpanded,
-                    onToggleLiveStreamExpanded = onToggleLiveStreamExpanded,
-                    autoContextEnabled = state.autoContextEnabled,
-                    onToggleAutoContext = onSetAutoContextEnabled,
-                    autoRunCommands = state.autoRunChatCommands,
-                    onToggleAutoRunCommands = onSetAutoRunChatCommands,
-                    detectedServerPorts = state.detectedServerPorts,
-                    onOpenServerPort = { port ->
-                        onOpenServerPort(port)
-                        selectedTab = WorkspaceTab.PREVIEW
-                    },
-                    onOpenTerminalTab = {
-                        selectedTab = WorkspaceTab.TERMINAL
-                        onTerminalOpened()
-                    },
-                    projectName = state.activeProject?.name ?: "Workspace",
-                    activeAgentLabel = headerAgentLabel,
-                    activeModelLabel = headerModelLabel,
-                    antigravityEffort = state.antigravityEffort,
-                    fullAccessEnabled = state.fullAccessTerminalEnabled,
-                    onOpenEngineSwitcher = { showQuickEngineSheet = true },
-                    onOpenCustomProviderStudio = {
-                        editingCustomProviderId = null
-                        showCustomProviderStudio = true
-                    },
-                    onOpenCliStore = { showWorkspaceCliHub = true },
-                    onSelectAntigravityEffort = onSetAntigravityEffort,
-                    onToggleFullAccess = onSetFullAccessTerminal,
-                    changes = state.changes,
-                    gitBranch = if (state.gitStatus.initialized) state.gitStatus.branch else "",
-                    onOpenFile = { path ->
-                        onOpenFile(
-                            WorkspaceEntry(
-                                path = path,
-                                name = path.substringAfterLast('/'),
-                                isDirectory = false,
-                                depth = 0,
-                            ),
-                        )
-                    },
-                    onKeepAllChanges = onKeepChanges,
-                    onUndoAllChanges = onUndoChanges,
-                    onKeepFileChange = onKeepFileChange,
-                    onUndoFileChange = onUndoFileChange,
-                    onOpenChangesTab = { selectedTab = WorkspaceTab.CHANGES },
-                )
-                WorkspaceTab.FILES -> FilesTab(
-                    files = state.workspaceFiles,
-                    loading = state.filesLoading,
-                    suggestedProjectRoot = state.suggestedProjectRoot,
-                    onRefresh = onRefreshFiles,
-                    onLoadDirectory = onLoadProjectDirectory,
-                    onOpenFile = onOpenFile,
-                    onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
-                    selectionMode = exportSelectionMode,
-                    exportSelection = exportSelection,
-                    exportRunning = state.projectExportRunning,
-                    exportEnabled = !state.isRunning && !state.projectTerminalRunning && !state.androidBuildRunning,
-                    onEnterSelection = {
-                        exportSelection = ExportSelection()
-                        exportSelectionMode = true
-                    },
-                    onCancelSelection = {
-                        exportSelectionMode = false
-                        exportSelection = ExportSelection()
-                    },
-                    onToggleSelection = { entry -> exportSelection = exportSelection.toggled(entry.path, entry.isDirectory) },
-                    onSelectAll = { exportSelection = ExportSelection() },
-                    onDownloadSelection = {
-                        exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
-                    },
-                    fileOpsEnabled = !state.isRunning && !state.projectTerminalRunning &&
-                        !state.androidBuildRunning && !state.projectExportRunning,
-                    onCreateEntry = onCreateWorkspaceEntry,
-                    onRenameEntry = onRenameWorkspaceEntry,
-                    onDeleteEntry = onDeleteWorkspaceEntry,
-                    onUploadInto = { parent ->
-                        pendingUploadParent = parent
-                        uploadLauncher.launch(arrayOf("*/*"))
-                    },
-                    onShareFile = onShareWorkspaceFile,
-                    onSaveFileCopy = { path ->
-                        pendingCopyPath = path
-                        saveCopyLauncher.launch(path.substringAfterLast('/'))
-                    },
-                )
-                WorkspaceTab.TERMINAL -> TerminalScreen(
-                    lines = state.projectTerminalLines,
-                    isRunning = state.projectTerminalRunning,
-                    onRun = onTerminalRun,
-                    onInput = onTerminalInput,
-                    onInterrupt = onTerminalInterrupt,
-                    onClear = onTerminalClear,
-                    onToggleTheme = {},
-                    themeMode = state.themeMode,
-                    title = stringResource(R.string.workspace_project_terminal),
-                    subtitle = "${state.projectTerminalCwd} · Full Root Ubuntu PRoot",
-                    liveOutput = state.projectTerminalLiveOutput,
-                    currentCommand = state.projectTerminalCommand,
-                    commandDraft = state.projectTerminalDraft,
-                    onCommandDraftConsumed = onTerminalDraftConsumed,
-                    promptPath = state.projectTerminalCwd,
-                    onStop = onTerminalStop,
-                    onFixWithAi = { cmd, out, code ->
-                        selectedTab = WorkspaceTab.CHAT
-                        onFixTerminalFailure(cmd, out, code)
-                    },
-                    showThemeAction = false,
-                    showQuickCommands = true,
-                    compactHeader = !terminalFullScreen,
-                    interactivePtyMode = state.interactivePtyMode,
-                    onTogglePtyMode = onSetInteractivePtyMode,
-                    ptyBuffer = state.projectPtyTerminalBuffer,
-                    ptySnapshot = state.projectPtySnapshot,
-                    ptyAlive = state.projectPtyTerminalAlive,
-                    sessionTabs = state.projectPtySessionTabs,
-                    activeSessionTabId = state.activeProjectPtySessionId,
-                    onSelectSessionTab = onSelectProjectPtyTab,
-                    onNewSessionTab = onNewProjectPtyTab,
-                    onCloseSessionTab = onCloseProjectPtyTab,
-                    onEnsurePtyStarted = onEnsureProjectPtyStarted,
-                    onSendPtyCommand = onSendProjectPtyCommand,
-                    onSendPtyRaw = onSendProjectPtyRaw,
-                    onPastePty = onPasteProjectPty,
-                    onResizePty = onResizeProjectPty,
-                    onInterruptPty = onInterruptProjectPty,
-                    onClearPty = onClearProjectPty,
-                    onRestartPty = onRestartProjectPty,
-                    onOpenCliHub = { showWorkspaceCliHub = true },
-                    onCloseFullScreen = if (terminalFullScreen) ({ selectedTab = WorkspaceTab.CHAT }) else null,
-                    isImmersiveFullScreen = terminalFullScreen,
-                    onToggleImmersiveFullScreen = { terminalFullScreen = !terminalFullScreen },
-                )
-                WorkspaceTab.CHANGES -> ChangesTab(
-                    changes = state.changes,
-                    onOpenFile = { path ->
-                        onOpenFile(
-                            WorkspaceEntry(
-                                path = path,
-                                name = path.substringAfterLast('/'),
-                                isDirectory = false,
-                                depth = 0,
-                            ),
-                        )
-                    },
-                    onUndo = onUndoChanges,
-                    onKeep = onKeepChanges,
-                    onUndoFile = onUndoFileChange,
-                    onKeepFile = onKeepFileChange,
-                )
-                WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
+                    }
+                    "CONSOLE" -> renderConsolePane(true)
+                    "FILES" -> renderFilesPane()
+                    "DIFFS" -> renderDiffsPane()
+                    "MC_KIT" -> renderMcKitPane()
+                    "WEB" -> PreviewTab(state.previewReady, state.previewUrl)
+                    else -> renderChatPane()
+                }
             }
         }
     }
@@ -7160,6 +7358,15 @@ private fun ChatTab(
 
                         Spacer(Modifier.width(4.dp))
 
+                        StudioVoiceMicButton(
+                            compact = true,
+                            onTranscribed = { spoken ->
+                                prompt = if (prompt.isBlank()) spoken else "${prompt.trimEnd()} $spoken"
+                            },
+                        )
+
+                        Spacer(Modifier.width(5.dp))
+
                         if (isRunning) {
                             Box(
                                 modifier = Modifier
@@ -8032,36 +8239,9 @@ private fun EmptyState(icon: ImageVector, title: String, body: String) {
 
 @Composable
 private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
-    val size = if (compact) 34.dp else 52.dp
-    val cornerRadius = if (compact) 10.dp else 15.dp
-    val primary = MaterialTheme.colorScheme.primary
-
-    Box(
-        modifier = modifier
-            .size(size)
-            .background(
-                brush = androidx.compose.ui.graphics.Brush.linearGradient(
-                    listOf(
-                        Color(0xFF141821),
-                        Color(0xFF0A0C10),
-                    ),
-                ),
-                shape = RoundedCornerShape(cornerRadius),
-            )
-            .border(
-                width = 1.dp,
-                color = primary.copy(alpha = 0.45f),
-                shape = RoundedCornerShape(cornerRadius),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "CS",
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.ExtraBold,
-            fontSize = if (compact) 13.sp else 18.sp,
-            letterSpacing = (-0.5).sp,
-            color = primary,
-        )
-    }
+    VoxelPrismBrandMark(
+        modifier = modifier,
+        size = if (compact) 32.dp else 50.dp,
+        isRunning = false,
+    )
 }

@@ -218,63 +218,55 @@ fun FullScreenChatWelcomeHero(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 14.dp),
-        horizontalAlignment = if (isAntigravity) Alignment.Start else Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Brand Badge (Pure Dark-Grey / Pitch-Black surface!)
+        // Horizontal Widescreen Studio Hero Header (Compact vertical height + Voxel-Prism BrandMark!)
         Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF0D1119),
+            border = BorderStroke(1.dp, Color(0xFF1D2636)),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                if (isAntigravity) {
-                    AntigravitySparkMark(size = 16.dp)
-                } else {
-                    AnimatedEngineOrb(isRunning = false, size = 16.dp)
-                }
-                Text(
-                    text = if (isAntigravity) "ANTIGRAVITY IDE · MOBILE MISSION CONTROL" else "CS PERSONAL ENGINE · FULL ROOT IDE",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.7.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-        }
-
-        Text(
-            text = if (isAntigravity) "Build or refactor in $projectName" else "Ready to build in $projectName",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.ExtraBold,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-
-        if (isAntigravity) {
-            // Antigravity IDE Mobile Workspace Readiness Strip (Dark-Grey / Black card)
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
+                VoxelPrismBrandMark(size = 34.dp, isRunning = false)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(Modifier.size(7.dp).background(EngineEmerald, CircleShape))
-                        Text("Agentic Planner + Diff Viewer + Termux PTY", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = if (isAntigravity) "ANTIGRAVITY WIDESCREEN STUDIO" else "CS PERSONAL ENGINE v5.0 · WIDESCREEN IDE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.6.sp,
+                            color = EngineEmerald,
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = EngineCyan.copy(alpha = 0.14f),
+                        ) {
+                            Text(
+                                text = "JAVA · XML · KOTLIN + MC BRAIN",
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.5.dp),
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = EngineCyan,
+                            )
+                        }
                     }
-                    Text("READY", fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace, color = EngineEmerald)
+                    Text(
+                        text = "Build or refactor in $projectName",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -381,27 +373,27 @@ fun FullScreenChatWelcomeHero(
             }
         }
 
-        // 2x2 Quick Starter Action Cards
+        // 2x2 Horizontal Widescreen Quick Starter Action Cards (Minecraft Launcher + Java / XML / Kotlin Focused!)
         val starters = listOf(
             Triple(
-                "Build Full Feature",
-                "Design, implement, and test a complete production feature in this workspace",
-                "Inspect this workspace, design a clean architecture, implement the requested feature end-to-end, and verify everything builds and runs.",
+                "MC Launcher Home (Java + XML)",
+                "Horizontal widescreen ConstraintLayout XML + LauncherActivity.java + RAM slider & version picker",
+                MinecraftLauncherKnowledge.blueprints[0].prompt,
             ),
             Triple(
-                "Run Commands & CLIs",
-                "Use full Ubuntu root terminal (`apt`, `npm -g`, `pip`, `git`, custom CLIs)",
-                "Check the environment in `/workspace`, install any needed Linux or npm/pip tools, and run full verification commands.",
+                "Mojang Manifest + Asset Engine",
+                "Multi-threaded Java SHA-1 downloader for version_manifest_v2.json, libraries & resources",
+                MinecraftLauncherKnowledge.blueprints[1].prompt,
             ),
             Triple(
-                "Debug & Fix Issues",
-                "Scan logs, terminal output & files to fix root causes automatically",
-                "Inspect recent errors, terminal logs, and source files in this workspace. Fix every root cause cleanly and verify with tests.",
+                "ARM64 JRE + LWJGL3 Bridge",
+                "Java + C JNI libjli.so OpenJDK 8/17/21 launcher + SurfaceView & GL4ES/Zink renderer",
+                MinecraftLauncherKnowledge.blueprints[3].prompt,
             ),
             Triple(
-                "Commit & Push GitHub",
-                "Review `git diff`, craft a clean commit, and push to `origin`",
-                "Run `git status` and `git diff`, stage all changes, create a clean commit message, and push to the configured GitHub remote.",
+                "Fabric + Modrinth (Kotlin + XML)",
+                "1-tap Fabric Loader installer + horizontal RecyclerView Modrinth Mod/Shader browser",
+                MinecraftLauncherKnowledge.blueprints[4].prompt,
             ),
         )
 
@@ -2232,13 +2224,28 @@ fun AntigravityMobileComposerStrip(
         }
 
         Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = EngineCyan.copy(alpha = 0.12f),
+            border = BorderStroke(0.8.dp, EngineCyan.copy(alpha = 0.4f)),
+        ) {
+            Text(
+                text = "⚡ Java·XML·KT",
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = EngineCyan,
+            )
+        }
+
+        Surface(
             onClick = onOpenTermux,
             shape = RoundedCornerShape(8.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
             Text(
-                text = ">_ Termux",
+                text = ">_ Console",
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,

@@ -13,31 +13,45 @@ import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
 
 @Immutable
+class TerminalRenderRow(
+    val chars: CharArray,
+    val fg: IntArray,
+    val bg: IntArray,
+    val flags: ByteArray,
+    val length: Int = chars.size,
+)
+
+@Immutable
 data class TerminalScreenSnapshot(
+    val renderRows: List<TerminalRenderRow> = emptyList(),
     val styledLines: List<AnnotatedString> = emptyList(),
     val plainText: String = "",
     val scrollbackCount: Int = 0,
     val cursorScreenRow: Int = 0,
     val cursorCol: Int = 0,
     val cursorVisible: Boolean = true,
+    val cursorStyle: Int = 1, // 0/1/2 block, 3/4 underline, 5/6 bar
     val bracketedPaste: Boolean = false,
     val alternateScreen: Boolean = false,
+    val synchronizedUpdate: Boolean = false,
     val windowTitle: String = "",
-    val rows: Int = 36,
-    val cols: Int = 92,
+    val rows: Int = 32,
+    val cols: Int = 112,
     val revision: Long = 0L,
 )
 
 /**
- * High-speed, allocation-conscious VT100 / Xterm-256Color / 24-bit TrueColor terminal emulator.
+ * Desktop-grade VT100 / VT520 / Xterm-256Color / ITU-T.416 TrueColor terminal emulator.
  *
- * Powers real Termux-class interactive sessions (`bash -i`, `vim`/`nvim`, `nano`, `htop`,
- * `tmux`, `codex`, `gemini`, `opencode`, `aider`, `git diff`, `ls --color`) directly on Android.
+ * Designed specifically so modern Go / BubbleTea / LipGloss / Rust / Node TUIs
+ * (`opencode`, `claude`, `codex`, `gemini`, `nvim`, `lazygit`, `htop`, `tmux`)
+ * render with 100% pixel-exact desktop Alacritty/Kitty fidelity on Android.
  */
 class Vt100TerminalEmulator(
-    initialRows: Int = 36,
-    initialCols: Int = 92,
-    private val maxScrollback: Int = 1200,
+    initialRows: Int = 32,
+    initialCols: Int = 112,
+    private val maxScrollback: Int = 1500,
+    var onReplyToPty: ((String) -> Unit)? = null,
 ) {
     private class CellLine(capacity: Int) {
         var chars = CharArray(capacity) { ' ' }
@@ -46,29 +60,56 @@ class Vt100TerminalEmulator(
         var flags = ByteArray(capacity)
         var dirty = true
         var cachedStyled: AnnotatedString? = null
+        var cachedRenderRow: TerminalRenderRow? = null
 
         fun ensureWidth(cols: Int) {
-            if (chars.size < cols) {
-                chars = chars.copyOf(cols).also { arr ->
-                    for (i in this.fg.size until cols) arr[i] = ' '
-                }
-                val oldSize = fg.size
-                fg = fg.copyOf(cols).also { for (i in oldSize until cols) it[i] = DEFAULT_FG }
-                bg = bg.copyOf(cols).also { for (i in oldSize until cols) it[i] = DEFAULT_BG }
-                flags = flags.copyOf(cols)
-                dirty = true
+            if (cols <= chars.size) return
+            val oldSize = chars.size
+            chars = chars.copyOf(cols).also { arr ->
+                for (i in oldSize until cols) arr[i] = ' '
             }
+            fg = fg.copyOf(cols).also { arr ->
+                for (i in oldSize until cols) arr[i] = DEFAULT_FG
+            }
+            bg = bg.copyOf(cols).also { arr ->
+                for (i in oldSize until cols) arr[i] = DEFAULT_BG
+            }
+            flags = flags.copyOf(cols)
+            invalidate()
         }
 
-        fun clearRange(from: Int, toExclusive: Int, fillBg: Int) {
+        fun clearRange(from: Int, toExclusive: Int, fillBg: Int, fillFg: Int = DEFAULT_FG) {
+            val start = from.coerceAtLeast(0)
             val end = toExclusive.coerceAtMost(chars.size)
-            for (i in from.coerceAtLeast(0) until end) {
+            for (i in start until end) {
                 chars[i] = ' '
-                fg[i] = DEFAULT_FG
+                fg[i] = fillFg
                 bg[i] = fillBg
                 flags[i] = 0
             }
+            invalidate()
+        }
+
+        fun invalidate() {
             dirty = true
+            cachedStyled = null
+            cachedRenderRow = null
+        }
+
+        fun toRenderRow(cols: Int): TerminalRenderRow {
+            val cached = cachedRenderRow
+            if (!dirty && cached != null && cached.length == cols) return cached
+            val len = cols.coerceAtLeast(1)
+            ensureWidth(len)
+            val snap = TerminalRenderRow(
+                chars = chars.copyOf(len),
+                fg = fg.copyOf(len),
+                bg = bg.copyOf(len),
+                flags = flags.copyOf(len),
+                length = len,
+            )
+            cachedRenderRow = snap
+            return snap
         }
     }
 
@@ -97,22 +138,26 @@ class Vt100TerminalEmulator(
     private var curFlags: Int = 0
 
     private var cursorVisible = true
+    private var cursorStyle = 1
     private var bracketedPaste = false
+    private var synchronizedOutput = false
     private var wrapPending = false
+    private var lastGraphicChar: Char = ' '
     private var windowTitle = ""
     private var revision = 0L
 
-    // Streaming UTF-8 decoder so split multi-byte sequences across chunks never corrupt
+    val isSynchronizedOutputActive: Boolean
+        @Synchronized get() = synchronizedOutput
+
     private val utf8Decoder = Charsets.UTF_8.newDecoder()
         .onMalformedInput(CodingErrorAction.REPLACE)
         .onUnmappableCharacter(CodingErrorAction.REPLACE)
     private var pendingBytes = ByteArray(8)
     private var pendingByteCount = 0
 
-    // Escape parser state
     private var parserState = STATE_NORMAL
-    private val csiBuffer = StringBuilder(48)
-    private val oscBuffer = StringBuilder(128)
+    private val csiBuffer = StringBuilder(96)
+    private val oscBuffer = StringBuilder(256)
     private var oscEscSeen = false
 
     private fun activeGrid(): Array<CellLine> = if (inAltScreen) altGrid else primaryGrid
@@ -128,7 +173,7 @@ class Vt100TerminalEmulator(
                 if (r < old.size) {
                     old[r].apply {
                         ensureWidth(targetCols)
-                        dirty = true
+                        invalidate()
                     }
                 } else {
                     CellLine(targetCols)
@@ -195,28 +240,32 @@ class Vt100TerminalEmulator(
 
     private fun processChar(ch: Char) {
         when (parserState) {
-            STATE_NORMAL -> when (ch) {
-                '\u001B' -> parserState = STATE_ESC
-                '\r' -> {
+            STATE_NORMAL -> when {
+                ch == '\u001B' -> parserState = STATE_ESC
+                ch == '\r' -> {
                     cursorCol = 0
                     wrapPending = false
                 }
-                '\n', '\u000B', '\u000C' -> {
+                ch == '\n' || ch == '\u000B' || ch == '\u000C' -> {
                     wrapPending = false
                     lineFeed()
                 }
-                '\b' -> {
+                ch == '\b' -> {
                     wrapPending = false
                     if (cursorCol > 0) cursorCol--
                 }
-                '\t' -> {
+                ch == '\t' -> {
                     wrapPending = false
                     val nextTab = ((cursorCol / 8) + 1) * 8
                     cursorCol = nextTab.coerceAtMost(cols - 1)
                 }
-                '\u0007' -> Unit // BEL
-                '\u000E', '\u000F' -> Unit // SO / SI charset shifts
-                else -> if (ch >= ' ') putChar(ch)
+                ch == '\u0007' || ch == '\u000E' || ch == '\u000F' -> Unit
+                Character.isLowSurrogate(ch) -> Unit // Ignore trailing surrogate half; BMP/plane handled safely
+                Character.getType(ch) == Character.NON_SPACING_MARK.toInt() -> Unit
+                ch >= ' ' -> {
+                    lastGraphicChar = ch
+                    putChar(ch)
+                }
             }
             STATE_ESC -> when (ch) {
                 '[' -> {
@@ -227,6 +276,12 @@ class Vt100TerminalEmulator(
                     oscBuffer.setLength(0)
                     oscEscSeen = false
                     parserState = STATE_OSC
+                }
+                'P', 'X', '^', '_' -> {
+                    // DCS / SOS / PM / APC string: consume until ST (ESC \ or BEL)
+                    oscBuffer.setLength(0)
+                    oscEscSeen = false
+                    parserState = STATE_DCS
                 }
                 '(', ')', '*', '+' -> parserState = STATE_CHARSET
                 '7' -> {
@@ -240,7 +295,7 @@ class Vt100TerminalEmulator(
                     wrapPending = false
                     parserState = STATE_NORMAL
                 }
-                'M' -> { // Reverse Index (scroll down if at top margin)
+                'M' -> {
                     if (cursorRow == scrollTop) scrollRegionDown(1)
                     else if (cursorRow > 0) cursorRow--
                     wrapPending = false
@@ -248,39 +303,45 @@ class Vt100TerminalEmulator(
                 }
                 'D' -> {
                     lineFeed()
+                    wrapPending = false
                     parserState = STATE_NORMAL
                 }
                 'E' -> {
                     cursorCol = 0
                     lineFeed()
+                    wrapPending = false
                     parserState = STATE_NORMAL
                 }
-                'c' -> { // Full RIS reset
-                    curFg = DEFAULT_FG
-                    curBg = DEFAULT_BG
-                    curFlags = 0
-                    inAltScreen = false
-                    scrollTop = 0
-                    scrollBottom = rows - 1
-                    clearAll()
+                'c' -> {
+                    resetEmulator()
                     parserState = STATE_NORMAL
                 }
                 else -> parserState = STATE_NORMAL
             }
             STATE_CHARSET -> parserState = STATE_NORMAL
+            STATE_DCS -> {
+                if (ch == '\u0007') {
+                    parserState = STATE_NORMAL
+                } else if (oscEscSeen) {
+                    oscEscSeen = false
+                    if (ch == '\\') parserState = STATE_NORMAL
+                } else if (ch == '\u001B') {
+                    oscEscSeen = true
+                }
+            }
             STATE_OSC -> {
-                if (oscEscSeen) {
+                if (ch == '\u0007') {
+                    finishOsc()
+                    parserState = STATE_NORMAL
+                } else if (oscEscSeen) {
                     oscEscSeen = false
                     if (ch == '\\') {
                         finishOsc()
                         parserState = STATE_NORMAL
                     }
-                } else if (ch == '\u0007') {
-                    finishOsc()
-                    parserState = STATE_NORMAL
                 } else if (ch == '\u001B') {
                     oscEscSeen = true
-                } else if (oscBuffer.length < 256) {
+                } else if (oscBuffer.length < 512) {
                     oscBuffer.append(ch)
                 }
             }
@@ -288,7 +349,7 @@ class Vt100TerminalEmulator(
                 if (ch in '\u0040'..'\u007E') {
                     handleCsi(csiBuffer.toString(), ch)
                     parserState = STATE_NORMAL
-                } else if (csiBuffer.length < 64) {
+                } else if (csiBuffer.length < 128) {
                     csiBuffer.append(ch)
                 } else {
                     parserState = STATE_NORMAL
@@ -297,10 +358,38 @@ class Vt100TerminalEmulator(
         }
     }
 
+    private fun resetEmulator() {
+        curFg = DEFAULT_FG
+        curBg = DEFAULT_BG
+        curFlags = 0
+        cursorVisible = true
+        cursorStyle = 1
+        bracketedPaste = false
+        synchronizedOutput = false
+        inAltScreen = false
+        scrollTop = 0
+        scrollBottom = rows - 1
+        for (r in 0 until rows) primaryGrid[r].clearRange(0, cols, DEFAULT_BG)
+        for (r in 0 until rows) altGrid[r].clearRange(0, cols, DEFAULT_BG)
+        cursorRow = 0
+        cursorCol = 0
+        wrapPending = false
+    }
+
     private fun finishOsc() {
         val raw = oscBuffer.toString()
-        if (raw.startsWith("0;") || raw.startsWith("2;")) {
-            windowTitle = raw.substring(2).take(80)
+        when {
+            raw.startsWith("0;") || raw.startsWith("2;") -> {
+                windowTitle = raw.substring(2).take(80)
+            }
+            raw == "10;?" -> {
+                // Terminal foreground color query (Xterm / LipGloss / Ultraviolet)
+                onReplyToPty?.invoke("\u001B]10;rgb:e6e6/eded/f3f3\u001B\\")
+            }
+            raw == "11;?" -> {
+                // Terminal background color query -> instant dark theme detection for OpenCode / Neovim!
+                onReplyToPty?.invoke("\u001B]11;rgb:0606/0808/0c0c\u001B\\")
+            }
         }
     }
 
@@ -314,11 +403,21 @@ class Vt100TerminalEmulator(
         val line = grid[cursorRow]
         line.ensureWidth(cols)
         val inverse = (curFlags and FLAG_INVERSE) != 0
+        val effectiveBg = if (inverse) {
+            if (curFg == DEFAULT_FG) 0xFFE6EDF3.toInt() else curFg
+        } else {
+            curBg
+        }
+        val effectiveFg = if (inverse) {
+            if (curBg == DEFAULT_BG) 0xFF06080C.toInt() else curBg
+        } else {
+            curFg
+        }
         line.chars[cursorCol] = ch
-        line.fg[cursorCol] = if (inverse) curBg else curFg
-        line.bg[cursorCol] = if (inverse) curFg else curBg
+        line.fg[cursorCol] = effectiveFg
+        line.bg[cursorCol] = effectiveBg
         line.flags[cursorCol] = (curFlags and FLAG_INVERSE.inv()).toByte()
-        line.dirty = true
+        line.invalidate()
         if (cursorCol >= cols - 1) {
             wrapPending = true
         } else {
@@ -345,7 +444,9 @@ class Vt100TerminalEmulator(
             for (r in scrollTop until scrollBottom) {
                 grid[r] = grid[r + 1]
             }
-            grid[scrollBottom] = CellLine(cols)
+            grid[scrollBottom] = CellLine(cols).apply {
+                if (curBg != DEFAULT_BG) clearRange(0, cols, curBg)
+            }
         }
     }
 
@@ -355,14 +456,54 @@ class Vt100TerminalEmulator(
             for (r in scrollBottom downTo scrollTop + 1) {
                 grid[r] = grid[r - 1]
             }
-            grid[scrollTop] = CellLine(cols)
+            grid[scrollTop] = CellLine(cols).apply {
+                if (curBg != DEFAULT_BG) clearRange(0, cols, curBg)
+            }
         }
     }
 
     private fun handleCsi(paramsRaw: String, finalChar: Char) {
+        // Handle intermediate space sequences like DECSCUSR (`CSI Ps SP q`)
+        if (paramsRaw.endsWith(" ") && finalChar == 'q') {
+            val styleCode = paramsRaw.dropLast(1).trim().toIntOrNull() ?: 1
+            cursorStyle = styleCode.coerceIn(0, 6)
+            return
+        }
+        // Handle DECRQM (`CSI ? Pd $ p`) mode queries used by BubbleTea / OpenCode / Kitty
+        if (paramsRaw.endsWith("$") && finalChar == 'p') {
+            val body = paramsRaw.dropLast(1)
+            if (body.startsWith("?")) {
+                val mode = body.substring(1).toIntOrNull() ?: 0
+                val status = when (mode) {
+                    2026 -> if (synchronizedOutput) 1 else 2
+                    2004 -> if (bracketedPaste) 1 else 2
+                    1049 -> if (inAltScreen) 1 else 2
+                    25 -> if (cursorVisible) 1 else 2
+                    else -> 0
+                }
+                onReplyToPty?.invoke("\u001B[?$mode;$status\$y")
+            }
+            return
+        }
+
         val privateMode = paramsRaw.startsWith("?")
-        val clean = if (privateMode) paramsRaw.substring(1) else paramsRaw.trimStart('>', '!')
-        val params = if (clean.isEmpty()) emptyList() else clean.split(';').map { it.toIntOrNull() ?: 0 }
+        val secondaryDa = paramsRaw.startsWith(">")
+        if (secondaryDa && finalChar == 'c') {
+            onReplyToPty?.invoke("\u001B[>1;10;0c")
+            return
+        }
+        // Ignore Kitty keyboard protocol progressive push/pop (`>u`, `<u`, `=u`) cleanly
+        if ((paramsRaw.startsWith(">") || paramsRaw.startsWith("<") || paramsRaw.startsWith("=")) && finalChar == 'u') {
+            return
+        }
+
+        if (finalChar == 'm' && !privateMode) {
+            applyModernSgr(paramsRaw)
+            return
+        }
+
+        val clean = if (privateMode) paramsRaw.substring(1) else paramsRaw.trimStart('>', '!', '=')
+        val params = if (clean.isEmpty()) emptyList() else clean.split(';').map { it.substringBefore(':').toIntOrNull() ?: 0 }
         fun p(idx: Int, default: Int = 1): Int = params.getOrNull(idx)?.takeIf { it > 0 } ?: default
         fun p0(idx: Int, default: Int = 0): Int = params.getOrNull(idx) ?: default
 
@@ -373,6 +514,7 @@ class Vt100TerminalEmulator(
                     when (code) {
                         25 -> cursorVisible = set
                         2004 -> bracketedPaste = set
+                        2026 -> synchronizedOutput = set
                         47, 1047, 1049 -> {
                             if (set && !inAltScreen) {
                                 altSavedRow = cursorRow
@@ -410,6 +552,20 @@ class Vt100TerminalEmulator(
                 cursorCol = (p(1, 1) - 1).coerceIn(0, cols - 1)
                 wrapPending = false
             }
+            'b' -> {
+                // REP: Repeat preceding graphic character p(0) times! Crucial for BubbleTea / OpenCode box fills!
+                val count = p(0).coerceIn(1, cols * 2)
+                repeat(count) { putChar(lastGraphicChar) }
+            }
+            'n' -> {
+                when (p0(0)) {
+                    5 -> onReplyToPty?.invoke("\u001B[0n")
+                    6 -> onReplyToPty?.invoke("\u001B[${cursorRow + 1};${cursorCol + 1}R")
+                }
+            }
+            'c' -> {
+                onReplyToPty?.invoke("\u001B[?62;22c")
+            }
             'J' -> {
                 when (p0(0, 0)) {
                     0 -> {
@@ -433,26 +589,29 @@ class Vt100TerminalEmulator(
                     2 -> grid[cursorRow].clearRange(0, cols, curBg)
                 }
             }
-            'L' -> { // Insert blank lines
+            'L' -> {
                 val count = p(0).coerceAtMost(scrollBottom - cursorRow + 1)
                 for (r in scrollBottom downTo cursorRow + count) {
                     grid[r] = grid[r - count]
                 }
                 for (r in cursorRow until (cursorRow + count).coerceAtMost(rows)) {
-                    grid[r] = CellLine(cols)
+                    grid[r] = CellLine(cols).apply { if (curBg != DEFAULT_BG) clearRange(0, cols, curBg) }
                 }
             }
-            'M' -> { // Delete lines
+            'M' -> {
                 val count = p(0).coerceAtMost(scrollBottom - cursorRow + 1)
                 for (r in cursorRow..scrollBottom - count) {
                     grid[r] = grid[r + count]
                 }
                 for (r in (scrollBottom - count + 1)..scrollBottom) {
-                    if (r in 0 until rows) grid[r] = CellLine(cols)
+                    if (r in 0 until rows) {
+                        grid[r] = CellLine(cols).apply { if (curBg != DEFAULT_BG) clearRange(0, cols, curBg) }
+                    }
                 }
             }
-            'P' -> { // Delete characters
+            'P' -> {
                 val line = grid[cursorRow]
+                line.ensureWidth(cols)
                 val count = p(0).coerceAtMost(cols - cursorCol)
                 for (c in cursorCol until cols - count) {
                     line.chars[c] = line.chars[c + count]
@@ -462,8 +621,9 @@ class Vt100TerminalEmulator(
                 }
                 line.clearRange(cols - count, cols, curBg)
             }
-            '@' -> { // Insert blank characters
+            '@' -> {
                 val line = grid[cursorRow]
+                line.ensureWidth(cols)
                 val count = p(0).coerceAtMost(cols - cursorCol)
                 for (c in cols - 1 downTo cursorCol + count) {
                     line.chars[c] = line.chars[c - count]
@@ -473,7 +633,10 @@ class Vt100TerminalEmulator(
                 }
                 line.clearRange(cursorCol, cursorCol + count, curBg)
             }
-            'X' -> grid[cursorRow].clearRange(cursorCol, (cursorCol + p(0)).coerceAtMost(cols), curBg)
+            'X' -> {
+                grid[cursorRow].ensureWidth(cols)
+                grid[cursorRow].clearRange(cursorCol, (cursorCol + p(0)).coerceAtMost(cols), curBg)
+            }
             'S' -> scrollRegionUp(p(0))
             'T' -> scrollRegionDown(p(0))
             'r' -> {
@@ -491,14 +654,57 @@ class Vt100TerminalEmulator(
                 cursorCol = savedCol.coerceIn(0, cols - 1)
                 wrapPending = false
             }
-            'm' -> applySgr(if (params.isEmpty()) listOf(0) else params)
         }
     }
 
-    private fun applySgr(codes: List<Int>) {
+    /**
+     * Full ITU-T T.416 & Xterm SGR parser supporting BOTH semicolon (`38;2;R;G;B`) AND
+     * modern colon subparameters (`38:2::R:G:B`, `38:2:R:G:B`, `38:5:N`, `4:3`, `58:2:...`)!
+     */
+    private fun applyModernSgr(paramsRaw: String) {
+        if (paramsRaw.isEmpty()) {
+            curFg = DEFAULT_FG
+            curBg = DEFAULT_BG
+            curFlags = 0
+            return
+        }
+        val groups = paramsRaw.split(';')
         var i = 0
-        while (i < codes.size) {
-            when (val code = codes[i]) {
+        while (i < groups.size) {
+            val token = groups[i]
+            if (':' in token) {
+                val sub = token.split(':')
+                val head = sub.getOrNull(0)?.toIntOrNull() ?: 0
+                when (head) {
+                    0 -> { curFg = DEFAULT_FG; curBg = DEFAULT_BG; curFlags = 0 }
+                    4 -> {
+                        val uStyle = sub.getOrNull(1)?.toIntOrNull() ?: 1
+                        curFlags = if (uStyle == 0) curFlags and FLAG_UNDERLINE.inv() else curFlags or FLAG_UNDERLINE
+                    }
+                    38, 48 -> {
+                        val isFg = head == 38
+                        val mode = sub.getOrNull(1)?.toIntOrNull() ?: 0
+                        if (mode == 5 && sub.size >= 3) {
+                            val idx = sub[2].toIntOrNull()?.coerceIn(0, 255) ?: 0
+                            val color = xterm256ToArgb(idx)
+                            if (isFg) curFg = color else curBg = color
+                        } else if (mode == 2 && sub.size >= 5) {
+                            // 5 parts = 38:2:R:G:B; 6+ parts = 38:2:CS:R:G:B
+                            val offset = if (sub.size >= 6) 3 else 2
+                            val r = sub.getOrNull(offset)?.toIntOrNull()?.coerceIn(0, 255) ?: 0
+                            val g = sub.getOrNull(offset + 1)?.toIntOrNull()?.coerceIn(0, 255) ?: 0
+                            val b = sub.getOrNull(offset + 2)?.toIntOrNull()?.coerceIn(0, 255) ?: 0
+                            val color = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                            if (isFg) curFg = color else curBg = color
+                        }
+                    }
+                    58, 59 -> Unit // Underline color / reset — safely ignored without corrupting fg/bg
+                }
+                i++
+                continue
+            }
+
+            when (val code = token.toIntOrNull() ?: 0) {
                 0 -> { curFg = DEFAULT_FG; curBg = DEFAULT_BG; curFlags = 0 }
                 1 -> curFlags = curFlags or FLAG_BOLD
                 2 -> curFlags = curFlags or FLAG_DIM
@@ -513,21 +719,23 @@ class Vt100TerminalEmulator(
                 39 -> curFg = DEFAULT_FG
                 in 40..47 -> curBg = ANSI_16_COLORS[code - 40]
                 49 -> curBg = DEFAULT_BG
+                59 -> Unit
                 in 90..97 -> curFg = ANSI_16_COLORS[code - 90 + 8]
                 in 100..107 -> curBg = ANSI_16_COLORS[code - 100 + 8]
-                38, 48 -> {
+                38, 48, 58 -> {
                     val isFg = code == 38
-                    val mode = codes.getOrNull(i + 1) ?: 0
-                    if (mode == 5 && i + 2 < codes.size) {
-                        val color = xterm256ToArgb(codes[i + 2].coerceIn(0, 255))
-                        if (isFg) curFg = color else curBg = color
+                    val isBg = code == 48
+                    val mode = groups.getOrNull(i + 1)?.toIntOrNull() ?: 0
+                    if (mode == 5 && i + 2 < groups.size) {
+                        val color = xterm256ToArgb((groups[i + 2].toIntOrNull() ?: 0).coerceIn(0, 255))
+                        if (isFg) curFg = color else if (isBg) curBg = color
                         i += 2
-                    } else if (mode == 2 && i + 4 < codes.size) {
-                        val r = codes[i + 2].coerceIn(0, 255)
-                        val g = codes[i + 3].coerceIn(0, 255)
-                        val b = codes[i + 4].coerceIn(0, 255)
+                    } else if (mode == 2 && i + 4 < groups.size) {
+                        val r = (groups[i + 2].toIntOrNull() ?: 0).coerceIn(0, 255)
+                        val g = (groups[i + 3].toIntOrNull() ?: 0).coerceIn(0, 255)
+                        val b = (groups[i + 4].toIntOrNull() ?: 0).coerceIn(0, 255)
                         val color = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                        if (isFg) curFg = color else curBg = color
+                        if (isFg) curFg = color else if (isBg) curBg = color
                         i += 4
                     }
                 }
@@ -539,23 +747,28 @@ class Vt100TerminalEmulator(
     @Synchronized
     fun snapshot(showBlockCursor: Boolean = true): TerminalScreenSnapshot {
         val grid = activeGrid()
-        val lastActiveScreenRow = run {
+        val lastActiveScreenRow = if (inAltScreen) {
+            rows - 1
+        } else {
             var last = cursorRow
             for (r in rows - 1 downTo 0) {
                 val line = grid[r]
-                if (line.chars.any { it != ' ' }) {
+                if (line.chars.any { it != ' ' } || line.bg.any { it != DEFAULT_BG }) {
                     last = maxOf(last, r)
                     break
                 }
             }
-            if (inAltScreen) rows - 1 else last
+            last
         }
 
-        val styled = ArrayList<AnnotatedString>((if (inAltScreen) 0 else scrollback.size) + lastActiveScreenRow + 1)
+        val totalRowsCount = (if (inAltScreen) 0 else scrollback.size) + lastActiveScreenRow + 1
+        val renderRows = ArrayList<TerminalRenderRow>(totalRowsCount)
+        val styled = ArrayList<AnnotatedString>(totalRowsCount)
         val plainBuilder = StringBuilder()
 
         if (!inAltScreen) {
             for (sbLine in scrollback) {
+                renderRows.add(sbLine.toRenderRow(cols))
                 val rendered = renderLine(sbLine, cursorColOnLine = -1)
                 styled.add(rendered)
                 plainBuilder.append(rendered.text).append('\n')
@@ -563,6 +776,7 @@ class Vt100TerminalEmulator(
         }
         val sbOffset = if (inAltScreen) 0 else scrollback.size
         for (r in 0..lastActiveScreenRow) {
+            renderRows.add(grid[r].toRenderRow(cols))
             val activeCursorCol = if (showBlockCursor && cursorVisible && r == cursorRow) {
                 cursorCol.coerceIn(0, cols - 1)
             } else {
@@ -575,14 +789,17 @@ class Vt100TerminalEmulator(
         }
 
         return TerminalScreenSnapshot(
+            renderRows = renderRows,
             styledLines = styled,
             plainText = plainBuilder.toString(),
             scrollbackCount = sbOffset,
             cursorScreenRow = cursorRow,
             cursorCol = cursorCol,
             cursorVisible = cursorVisible,
+            cursorStyle = cursorStyle,
             bracketedPaste = bracketedPaste,
             alternateScreen = inAltScreen,
+            synchronizedUpdate = synchronizedOutput,
             windowTitle = windowTitle,
             rows = rows,
             cols = cols,
@@ -666,19 +883,19 @@ class Vt100TerminalEmulator(
         private const val STATE_CSI = 2
         private const val STATE_OSC = 3
         private const val STATE_CHARSET = 4
+        private const val STATE_DCS = 5
 
-        private const val FLAG_BOLD = 1
-        private const val FLAG_DIM = 2
-        private const val FLAG_ITALIC = 4
-        private const val FLAG_UNDERLINE = 8
-        private const val FLAG_INVERSE = 16
+        const val FLAG_BOLD = 1
+        const val FLAG_DIM = 2
+        const val FLAG_ITALIC = 4
+        const val FLAG_UNDERLINE = 8
+        const val FLAG_INVERSE = 16
 
-        private const val DEFAULT_FG = 0xFFE6EDF3.toInt()
-        private const val DEFAULT_BG = 0x00000000
-        private const val CURSOR_FG = 0xFF000000.toInt()
-        private const val CURSOR_BG = 0xFF34D399.toInt()
+        const val DEFAULT_FG = 0xFFE6EDF3.toInt()
+        const val DEFAULT_BG = 0x00000000
+        const val CURSOR_FG = 0xFF06080C.toInt()
+        const val CURSOR_BG = 0xFF34D399.toInt()
 
-        // Crisp Termux / Tokyo-Dark high-contrast 16-color ANSI palette
         private val ANSI_16_COLORS = intArrayOf(
             0xFF16181D.toInt(), // 0 Black
             0xFFFF6B6B.toInt(), // 1 Red

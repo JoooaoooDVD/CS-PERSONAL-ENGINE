@@ -49,7 +49,7 @@ internal class NativeSpawnProcess private constructor(
     internal fun resizePty(rows: Int, columns: Int) {
         runCatching {
             val fd = stdinPfd.fd
-            if (fd >= 0) NativeSpawn.resizePty(fd, rows.coerceIn(10, 300), columns.coerceIn(20, 400))
+            if (fd >= 0) NativeSpawn.resizePty(fd, pid, rows.coerceIn(10, 300), columns.coerceIn(20, 400))
         }
     }
 
@@ -129,5 +129,5 @@ private object NativeSpawn {
     ): IntArray
     external fun waitFor(pid: Int, noHang: Boolean): Int
     external fun kill(pid: Int, signal: Int): Int
-    external fun resizePty(fd: Int, rows: Int, columns: Int): Int
+    external fun resizePty(fd: Int, pid: Int, rows: Int, columns: Int): Int
 }

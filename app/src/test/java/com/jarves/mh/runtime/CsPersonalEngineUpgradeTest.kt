@@ -10,6 +10,7 @@ import com.jarves.mh.model.ProviderProtocol
 import com.jarves.mh.model.SavedCustomProvider
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.model.providersForAgent
+import com.jarves.mh.ui.MinecraftLauncherKnowledge
 import com.jarves.mh.ui.computeLineDiffStats
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -318,5 +319,48 @@ class CsPersonalEngineUpgradeTest {
                 "fun greet() {\n    println(\"new 1\")\n    println(\"new 2\")\n}",
             ),
         )
+    }
+
+    @Test
+    fun vt100EmulatorSupportsOpenCodeColonSgrRepAndTerminalQueries() {
+        val replies = mutableListOf<String>()
+        val emu = Vt100TerminalEmulator(initialRows = 24, initialCols = 80).apply {
+            onReplyToPty = { replies.add(it) }
+        }
+
+        // OpenCode / Ultraviolet startup queries: OSC 11;?, CSI 6n, DECRQM ?2026$p
+        emu.feedText("\u001B]11;?\u0007\u001B[6n\u001B[?2026\$p")
+        assertTrue(replies.any { it.startsWith("\u001B]11;rgb:") })
+        assertTrue(replies.any { it == "\u001B[1;1R" })
+        assertTrue(replies.any { it == "\u001B[?2026;2\$y" })
+
+        // ITU-T T.416 colon TrueColor background + foreground + CSI b (REP repeat graphic char)
+        emu.feedText("\u001B[?1049h\u001B[1;1H\u001B[48:2::14:18:24m\u001B[38:2:52:211:153m▀\u001B[5b \u001B[10b")
+        val snap = emu.snapshot()
+        assertEquals(24, snap.renderRows.size)
+        val row0 = snap.renderRows[0]
+        // '▀' printed once + repeated 5 times = 6 block glyphs at cols 0..5, then 11 spaces at cols 6..16 with dark bg!
+        for (c in 0 until 6) {
+            assertEquals('▀', row0.chars[c])
+            assertEquals((0xFF shl 24) or (52 shl 16) or (211 shl 8) or 153, row0.fg[c])
+            assertEquals((0xFF shl 24) or (14 shl 16) or (18 shl 8) or 24, row0.bg[c])
+        }
+        for (c in 6 until 17) {
+            assertEquals(' ', row0.chars[c])
+            assertEquals((0xFF shl 24) or (14 shl 16) or (18 shl 8) or 24, row0.bg[c])
+        }
+    }
+
+    @Test
+    fun minecraftLauncherSpecialistBrainProvidesJavaXmlKotlinArchitecture() {
+        val brief = MinecraftLauncherKnowledge.buildSpecialistSystemBrief("Build a Minecraft launcher version selector in Java and XML")
+        assertTrue("Java" in brief)
+        assertTrue("Android XML" in brief)
+        assertTrue("Kotlin" in brief)
+        assertTrue("version_manifest_v2.json" in brief)
+        assertTrue("libjli.so" in brief)
+        assertTrue("LWJGL3" in brief)
+        assertTrue("Minecraft Launcher Task" in brief)
+        assertTrue(MinecraftLauncherKnowledge.blueprints.size >= 6)
     }
 }

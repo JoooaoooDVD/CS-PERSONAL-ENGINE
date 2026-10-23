@@ -13,8 +13,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * Real Termux-class interactive Linux PTY session backed by [Vt100TerminalEmulator] and
- * zero-polling kernel PTY streaming via [NativeSpawnProcess].
+ * Desktop-grade interactive Linux PTY session backed by [Vt100TerminalEmulator],
+ * zero-polling kernel PTY streaming, live terminal query responses, and `SIGWINCH` resizing.
  */
 class InteractivePtySession(
     val sessionId: String,
@@ -25,7 +25,20 @@ class InteractivePtySession(
     private val guestWorkspacePath: String = "/workspace",
     private val onPreviewUrlDetected: ((String) -> Unit)? = null,
 ) {
-    private val emulator = Vt100TerminalEmulator(initialRows = 38, initialCols = 92)
+    private val emulator = Vt100TerminalEmulator(initialRows = 32, initialCols = 112).also { emu ->
+        emu.onReplyToPty = { reply ->
+            val target = process
+            if (target != null && target.isAlive) {
+                val replyBytes = reply.toByteArray(Charsets.UTF_8)
+                scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        target.outputStream.write(replyBytes)
+                        target.outputStream.flush()
+                    }
+                }
+            }
+        }
+    }
 
     private val _snapshot = MutableStateFlow(emulator.snapshot())
     val snapshot: StateFlow<TerminalScreenSnapshot> = _snapshot.asStateFlow()
@@ -36,7 +49,7 @@ class InteractivePtySession(
     private val _alive = MutableStateFlow(false)
     val alive: StateFlow<Boolean> = _alive.asStateFlow()
 
-    private var process: Process? = null
+    @Volatile private var process: Process? = null
     private var snapshotJob: Job? = null
     private var livenessJob: Job? = null
     private val dirtySignal = Channel<Unit>(Channel.CONFLATED)
@@ -54,20 +67,25 @@ class InteractivePtySession(
             workspaceDir.mkdirs()
             val rows = emulator.rows
             val cols = emulator.cols
-            // Enable kernel PTY echo (`stty sane echo icrnl`), colors, and full PATH before exec'ing interactive bash!
+            // Important: unset COLUMNS/LINES env vars and enable checkwinsize so Go/BubbleTea/Node TUIs
+            // (`opencode`, `claude`, `codex`, `nvim`) ALWAYS read live kernel TIOCGWINSZ dimensions!
             val initRc = """
+                unset COLUMNS LINES
                 stty sane echo icanon icrnl rows $rows cols $cols 2>/dev/null || true
+                shopt -s checkwinsize 2>/dev/null || true
                 export DEBIAN_FRONTEND=noninteractive
                 export APT_LISTCHANGES_FRONTEND=none
                 export PIP_BREAK_SYSTEM_PACKAGES=1
                 export NPM_CONFIG_PREFIX=/root/.npm-global
+                export LANG=C.UTF-8
+                export LC_ALL=C.UTF-8
                 export TERM=xterm-256color
                 export COLORTERM=truecolor
                 export PATH="/root/.local/bin:/root/.npm-global/bin:/root/.bun/bin:/root/.cargo/bin:/root/.deno/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${'$'}PATH"
                 alias ls='ls --color=auto'
                 alias ll='ls -lah --color=auto'
                 alias grep='grep --color=auto'
-                export PS1='\[\033[1;32m\]root@cs-engine\[\033[0m\]:\[\033[1;36m\]\w\[\033[0m\]# '
+                export PS1='\[\033[1;32m\]✦ cs-studio\[\033[0m\] \[\033[1;36m\]\w\[\033[0m\] \[\033[1;32m\]❯\[\033[0m\] '
                 cd ${shellSingleQuote(guestWorkspacePath)} 2>/dev/null || true
                 exec /usr/bin/bash --norc --noprofile -i
             """.trimIndent()
@@ -79,8 +97,8 @@ class InteractivePtySession(
                 environment = mapOf(
                     "TERM" to "xterm-256color",
                     "COLORTERM" to "truecolor",
-                    "COLUMNS" to cols.toString(),
-                    "LINES" to rows.toString(),
+                    "LANG" to "C.UTF-8",
+                    "LC_ALL" to "C.UTF-8",
                 ),
                 guestCommand = listOf("/usr/bin/bash", "-lc", initRc),
                 guestWorkspacePath = guestWorkspacePath,
@@ -103,10 +121,13 @@ class InteractivePtySession(
         if (snapshotJob?.isActive == true) return
         snapshotJob = scope.launch(Dispatchers.Default) {
             for (signal in dirtySignal) {
-                // Coalesce burst bytes within an 8ms sub-frame window -> 120Hz crisp echo, zero UI flood!
                 delay(8)
+                // Respect DEC ?2026 synchronized output frame batching (up to 16ms max wait) so TUI redraws never tear!
+                if (emulator.isSynchronizedOutputActive) {
+                    delay(12)
+                }
                 while (dirtySignal.tryReceive().isSuccess) {
-                    // Drain any coalesced signals
+                    // Drain coalesced burst signals
                 }
                 val snap = emulator.snapshot(showBlockCursor = true)
                 _snapshot.value = snap
@@ -129,9 +150,13 @@ class InteractivePtySession(
     }
 
     fun resize(rows: Int, cols: Int) {
-        val r = rows.coerceIn(12, 200)
-        val c = cols.coerceIn(24, 260)
-        if (r == emulator.rows && c == emulator.cols) return
+        val r = rows.coerceIn(10, 200)
+        val c = cols.coerceIn(24, 300)
+        if (r == emulator.rows && c == emulator.cols) {
+            // Still ensure kernel PTY matches in case process started right before layout
+            (process as? NativeSpawnProcess)?.resizePty(r, c)
+            return
+        }
         emulator.resize(r, c)
         (process as? NativeSpawnProcess)?.resizePty(r, c)
         dirtySignal.trySend(Unit)
@@ -187,7 +212,7 @@ class InteractivePtySession(
         emulator.clearAll()
         dirtySignal.trySend(Unit)
         if (process?.isAlive == true) {
-            sendRaw("\u000C") // Ctrl+L redraw prompt cleanly
+            sendRaw("\u000C")
         }
     }
 
@@ -229,7 +254,7 @@ class InteractivePtySession(
                 .substringAfterLast("\u001B[2J")
                 .substringAfterLast("\u001Bc")
             val withoutOsc = afterClear.replace(Regex("\u001B\\][^\\u0007\\u001B]*(?:\u0007|\u001B\\\\)"), "")
-            val withoutCsi = withoutOsc.replace(Regex("\u001B\\[[0-9;?]*[ -/]*[@-~]"), "")
+            val withoutCsi = withoutOsc.replace(Regex("\u001B\\[[0-9;:?]*[ -/]*[@-~]"), "")
             val withoutSingleEsc = withoutCsi.replace(Regex("\u001B[@-Z\\\\-_]"), "")
             return withoutSingleEsc
                 .replace("\r\n", "\n")
