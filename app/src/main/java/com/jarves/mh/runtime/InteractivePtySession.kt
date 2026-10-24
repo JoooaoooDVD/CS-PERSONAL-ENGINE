@@ -85,7 +85,7 @@ class InteractivePtySession(
                 alias ls='ls --color=auto'
                 alias ll='ls -lah --color=auto'
                 alias grep='grep --color=auto'
-                export PS1='\[\033[1;32m\]✦ cs-studio\[\033[0m\] \[\033[1;36m\]\w\[\033[0m\] \[\033[1;32m\]❯\[\033[0m\] '
+                export PS1='\[\033[38;5;246m\]\w\[\033[0m\] \[\033[38;2;217;119;87m\]❯\[\033[0m\] '
                 cd ${shellSingleQuote(guestWorkspacePath)} 2>/dev/null || true
                 exec /usr/bin/bash --norc --noprofile -i
             """.trimIndent()

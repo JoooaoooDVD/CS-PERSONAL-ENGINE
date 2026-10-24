@@ -1,10 +1,8 @@
 package com.jarves.mh.ui.theme
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
@@ -12,153 +10,76 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// CS Personal Engine — Obsidian Dark-Grey & Pitch-Black Signature Palette
-val EngineCyan = Color(0xFF38BDF8)
-val EnginePlatinum = Color(0xFFE2E8F0)
-val EngineEmerald = Color(0xFF34D399)
-val EngineAmber = Color(0xFFF59E0B)
-val EngineViolet = Color(0xFF818CF8)
+// Pure Dark Minimal Claude-Code Palette (Preserving existing public names for compatibility)
+val ClaudeTerracotta = Color(0xFFD97757)
+val ClaudeDarkBg = Color(0xFF0C0C0E)
+val ClaudeDarkSurface = Color(0xFF151518)
+val ClaudeDarkCard = Color(0xFF1B1B1F)
+val ClaudeDarkBorder = Color(0xFF26262C)
+val ClaudeTextPrimary = Color(0xFFF4F4F6)
+val ClaudeTextSecondary = Color(0xFF8E8E95)
 
-// Authentic Google Antigravity Cosmic Signature Palette
-val AntigravityBlue = Color(0xFF5B8DEF)
-val AntigravityViolet = Color(0xFF9B72FF)
-val AntigravityAqua = Color(0xFF36E4DA)
-val AntigravityBg = Color(0xFF0A0D14)
-val AntigravitySurface = Color(0xFF111622)
-val AntigravityCard = Color(0xFF171E2E)
-val AntigravityBorder = Color(0xFF253047)
+val EngineCyan = ClaudeTerracotta
+val EnginePlatinum = Color(0xFFE4E4E7)
+val EngineEmerald = Color(0xFF4ADE80)
+val EngineAmber = Color(0xFFFBBF24)
+val EngineViolet = Color(0xFFA1A1AA)
 
-// Retained aliases used across UI files, upgraded to Obsidian/Titanium aesthetics
-val PocketOrange = Color(0xFF38BDF8)
-val PocketBlue = Color(0xFF818CF8)
-val PocketGreen = Color(0xFF34D399)
-val PocketBackground = Color(0xFF090A0D)
-val PocketSurface = Color(0xFF111318)
-val PocketSurfaceVariant = Color(0xFF191C24)
-val PocketOutline = Color(0xFF282D3A)
+val AntigravityBlue = ClaudeTerracotta
+val AntigravityViolet = Color(0xFFA1A1AA)
+val AntigravityAqua = Color(0xFF4ADE80)
+val AntigravityBg = ClaudeDarkBg
+val AntigravitySurface = ClaudeDarkSurface
+val AntigravityCard = ClaudeDarkCard
+val AntigravityBorder = ClaudeDarkBorder
 
-private val ObsidianDarkColors = darkColorScheme(
-    primary = EngineCyan,
-    onPrimary = Color(0xFF04131D),
-    primaryContainer = Color(0xFF132536),
-    onPrimaryContainer = Color(0xFFD6F1FF),
-    secondary = EnginePlatinum,
-    onSecondary = Color(0xFF111318),
-    secondaryContainer = Color(0xFF1F2430),
-    onSecondaryContainer = Color(0xFFE2E8F0),
-    tertiary = EngineEmerald,
-    onTertiary = Color(0xFF022C1E),
-    tertiaryContainer = Color(0xFF0D2E24),
-    onTertiaryContainer = Color(0xFFA7F3D0),
-    background = Color(0xFF090A0D),
-    onBackground = Color(0xFFECEFF4),
-    surface = Color(0xFF111318),
-    onSurface = Color(0xFFECEFF4),
-    surfaceVariant = Color(0xFF191C24),
-    onSurfaceVariant = Color(0xFF94A3B8),
-    surfaceContainerLowest = Color(0xFF050608),
-    surfaceContainerLow = Color(0xFF0D0F14),
-    surfaceContainer = Color(0xFF13161D),
-    surfaceContainerHigh = Color(0xFF1A1E27),
-    surfaceContainerHighest = Color(0xFF222733),
-    outline = Color(0xFF2A303D),
-    outlineVariant = Color(0xFF1E232E),
-    error = Color(0xFFF87171),
-    onError = Color(0xFF2D0606),
-    errorContainer = Color(0xFF3B1215),
-    onErrorContainer = Color(0xFFFECACA),
-)
+val PocketOrange = ClaudeTerracotta
+val PocketBlue = ClaudeTerracotta
+val PocketGreen = Color(0xFF4ADE80)
+val PocketBackground = ClaudeDarkBg
+val PocketSurface = ClaudeDarkSurface
+val PocketSurfaceVariant = ClaudeDarkCard
+val PocketOutline = ClaudeDarkBorder
 
-private val AmoledPitchBlackColors = darkColorScheme(
-    primary = EngineCyan,
-    onPrimary = Color(0xFF03111A),
-    primaryContainer = Color(0xFF0F2030),
-    onPrimaryContainer = Color(0xFFD6F1FF),
-    secondary = EnginePlatinum,
-    onSecondary = Color(0xFF0A0B0E),
-    secondaryContainer = Color(0xFF171A21),
-    onSecondaryContainer = Color(0xFFE2E8F0),
-    tertiary = EngineEmerald,
-    onTertiary = Color(0xFF022C1E),
-    tertiaryContainer = Color(0xFF09261D),
-    onTertiaryContainer = Color(0xFFA7F3D0),
-    background = Color(0xFF000000),
-    onBackground = Color(0xFFF1F5F9),
-    surface = Color(0xFF0B0D11),
-    onSurface = Color(0xFFF1F5F9),
-    surfaceVariant = Color(0xFF14171F),
-    onSurfaceVariant = Color(0xFF94A3B8),
-    surfaceContainerLowest = Color(0xFF000000),
-    surfaceContainerLow = Color(0xFF07080B),
-    surfaceContainer = Color(0xFF0E1016),
-    surfaceContainerHigh = Color(0xFF151821),
-    surfaceContainerHighest = Color(0xFF1D212D),
-    outline = Color(0xFF232834),
-    outlineVariant = Color(0xFF171B24),
-    error = Color(0xFFF87171),
-    onError = Color(0xFF2D0606),
-    errorContainer = Color(0xFF350E11),
-    onErrorContainer = Color(0xFFFECACA),
-)
-
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF0284C7),
+private val PureClaudeDarkColors = darkColorScheme(
+    primary = ClaudeTerracotta,
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFE0F2FE),
-    onPrimaryContainer = Color(0xFF082F49),
-    secondary = Color(0xFF334155),
-    onSecondary = Color(0xFFFFFFFF),
-    tertiary = Color(0xFF059669),
-    onTertiary = Color(0xFFFFFFFF),
-    background = Color(0xFFF4F6F9),
-    onBackground = Color(0xFF0F172A),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF0F172A),
-    surfaceVariant = Color(0xFFE9EEF5),
-    onSurfaceVariant = Color(0xFF475569),
-    outline = Color(0xFFCBD5E1),
-    outlineVariant = Color(0xFFE2E8F0),
-)
-
-private val AntigravityCosmicDarkColors = darkColorScheme(
-    primary = AntigravityBlue,
-    onPrimary = Color(0xFF061024),
-    primaryContainer = Color(0xFF182442),
-    onPrimaryContainer = Color(0xFFDCE7FF),
-    secondary = AntigravityViolet,
-    onSecondary = Color(0xFF130B29),
-    secondaryContainer = Color(0xFF231C3E),
-    onSecondaryContainer = Color(0xFFE9DDFF),
-    tertiary = AntigravityAqua,
-    onTertiary = Color(0xFF032826),
-    tertiaryContainer = Color(0xFF0D2F33),
-    onTertiaryContainer = Color(0xFFB8FFF9),
-    background = AntigravityBg,
-    onBackground = Color(0xFFEEF2FF),
-    surface = AntigravitySurface,
-    onSurface = Color(0xFFEEF2FF),
-    surfaceVariant = AntigravityCard,
-    onSurfaceVariant = Color(0xFF9AA8C7),
-    surfaceContainerLowest = Color(0xFF06080E),
-    surfaceContainerLow = Color(0xFF0D111B),
-    surfaceContainer = Color(0xFF131927),
-    surfaceContainerHigh = Color(0xFF192133),
-    surfaceContainerHighest = Color(0xFF212B42),
-    outline = AntigravityBorder,
-    outlineVariant = Color(0xFF1C2438),
-    error = Color(0xFFFF7B7B),
+    primaryContainer = Color(0xFF2B1B15),
+    onPrimaryContainer = Color(0xFFFFDDD1),
+    secondary = Color(0xFFD4D4D8),
+    onSecondary = Color(0xFF121215),
+    secondaryContainer = Color(0xFF222227),
+    onSecondaryContainer = Color(0xFFE4E4E7),
+    tertiary = Color(0xFF4ADE80),
+    onTertiary = Color(0xFF052E16),
+    tertiaryContainer = Color(0xFF132A1C),
+    onTertiaryContainer = Color(0xFFBBF7D0),
+    background = ClaudeDarkBg,
+    onBackground = ClaudeTextPrimary,
+    surface = ClaudeDarkSurface,
+    onSurface = ClaudeTextPrimary,
+    surfaceVariant = ClaudeDarkCard,
+    onSurfaceVariant = ClaudeTextSecondary,
+    surfaceContainerLowest = Color(0xFF070709),
+    surfaceContainerLow = Color(0xFF111114),
+    surfaceContainer = ClaudeDarkSurface,
+    surfaceContainerHigh = ClaudeDarkCard,
+    surfaceContainerHighest = Color(0xFF232329),
+    outline = ClaudeDarkBorder,
+    outlineVariant = Color(0xFF1E1E24),
+    error = Color(0xFFF87171),
     onError = Color(0xFF2D0606),
-    errorContainer = Color(0xFF3B1218),
+    errorContainer = Color(0xFF351315),
     onErrorContainer = Color(0xFFFECACA),
 )
 
-private val AntigravityCosmicAmoledColors = AntigravityCosmicDarkColors.copy(
+private val PureAmoledBlackColors = PureClaudeDarkColors.copy(
     background = Color(0xFF000000),
-    surface = Color(0xFF0A0D16),
-    surfaceVariant = Color(0xFF121827),
+    surface = Color(0xFF0D0D10),
+    surfaceVariant = Color(0xFF151519),
     surfaceContainerLowest = Color(0xFF000000),
-    surfaceContainerLow = Color(0xFF070A12),
-    surfaceContainer = Color(0xFF0E1320),
+    surfaceContainerLow = Color(0xFF09090B),
+    surfaceContainer = Color(0xFF0E0E12),
 )
 
 enum class AppThemeMode { SYSTEM, DARK, AMOLED, LIGHT }
@@ -169,14 +90,8 @@ fun PocketTheme(
     antigravityMode: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val systemDark = isSystemInDarkTheme()
-    val scheme = when (themeMode) {
-        AppThemeMode.DARK -> ObsidianDarkColors
-        AppThemeMode.AMOLED -> AmoledPitchBlackColors
-        AppThemeMode.LIGHT -> LightColors
-        AppThemeMode.SYSTEM -> if (systemDark) ObsidianDarkColors else LightColors
-    }
-    val isDark = themeMode != AppThemeMode.LIGHT && (themeMode != AppThemeMode.SYSTEM || systemDark)
+    // Always pure dark theme per user requirement ("bus ekadam dark color theme rakho")
+    val scheme = if (themeMode == AppThemeMode.AMOLED) PureAmoledBlackColors else PureClaudeDarkColors
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -187,8 +102,8 @@ fun PocketTheme(
             @Suppress("DEPRECATION")
             window.navigationBarColor = scheme.background.toArgb()
             val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.isAppearanceLightStatusBars = !isDark
-            insetsController.isAppearanceLightNavigationBars = !isDark
+            insetsController.isAppearanceLightStatusBars = false
+            insetsController.isAppearanceLightNavigationBars = false
         }
     }
 

@@ -1,86 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group
-        android:pivotX="54"
-        android:pivotY="54"
-        android:scaleX="0.80"
-        android:scaleY="0.80">
-        <!-- Outer Hexagonal Halo Ring -->
-        <path
-            android:fillColor="#0E141D"
-            android:strokeColor="#2A34D399"
-            android:strokeWidth="1.4"
-            android:pathData="M54,18L84,35.3L84,72.7L54,90L24,72.7L24,35.3Z" />
-
-        <!-- Isometric Voxel Cube — Top Emerald Facet -->
-        <path android:pathData="M54,25L78,39L54,53L30,39Z">
-            <aapt:attr name="android:fillColor">
-                <gradient
-                    android:type="linear"
-                    android:startX="30"
-                    android:startY="25"
-                    android:endX="78"
-                    android:endY="53">
-                    <item android:offset="0.0" android:color="#6EE7B7" />
-                    <item android:offset="1.0" android:color="#10B981" />
-                </gradient>
-            </aapt:attr>
-        </path>
-
-        <!-- Isometric Voxel Cube — Left Obsidian-Cyan Facet -->
-        <path android:pathData="M30,39L54,53L54,81L30,67Z">
-            <aapt:attr name="android:fillColor">
-                <gradient
-                    android:type="linear"
-                    android:startX="30"
-                    android:startY="39"
-                    android:endX="54"
-                    android:endY="81">
-                    <item android:offset="0.0" android:color="#1E293B" />
-                    <item android:offset="1.0" android:color="#0F172A" />
-                </gradient>
-            </aapt:attr>
-        </path>
-
-        <!-- Isometric Voxel Cube — Right Electric-Cyan Facet -->
-        <path android:pathData="M54,53L78,39L78,67L54,81Z">
-            <aapt:attr name="android:fillColor">
-                <gradient
-                    android:type="linear"
-                    android:startX="54"
-                    android:startY="39"
-                    android:endX="78"
-                    android:endY="81">
-                    <item android:offset="0.0" android:color="#38BDF8" />
-                    <item android:offset="1.0" android:color="#0284C7" />
-                </gradient>
-            </aapt:attr>
-        </path>
-
-        <!-- Crisp Isometric Wireframe Edges -->
-        <path
-            android:fillColor="#00000000"
-            android:strokeColor="#F8FAFC"
-            android:strokeWidth="1.6"
-            android:strokeLineJoin="round"
-            android:pathData="M54,25L78,39L78,67L54,81L30,67L30,39Z M30,39L54,53L78,39 M54,53L54,81" />
-
-        <!-- Code Prompt '>' Glyph on Left Facet -->
-        <path
-            android:fillColor="#00000000"
-            android:strokeColor="#34D399"
-            android:strokeWidth="3.0"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round"
-            android:pathData="M37,51L45,58L37,62" />
-
-        <!-- Floating Platinum Spark Core at Center Vertex -->
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M54,47L56.2,51.8L61,54L56.2,56.2L54,61L51.8,56.2L47,54L51.8,51.8Z" />
-    </group>
+    <!-- Iconic Claude Code Pixel Mascot ("Claw'd") centered inside adaptive safe zone -->
+    <!-- Main body block -->
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M34,36h40v26h-40z" />
+    <!-- Left & Right pixel arms -->
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M28,44h6v10h-6z" />
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M74,44h6v10h-6z" />
+    <!-- 4 pixel legs -->
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M38,62h6v11h-6z" />
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M47,62h5v11h-5z" />
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M56,62h5v11h-5z" />
+    <path
+        android:fillColor="#D97757"
+        android:pathData="M64,62h6v11h-6z" />
+    <!-- Left & Right dark pixel eyes -->
+    <path
+        android:fillColor="#0C0C0E"
+        android:pathData="M41,45h5v6h-5z" />
+    <path
+        android:fillColor="#0C0C0E"
+        android:pathData="M62,45h5v6h-5z" />
 </vector>

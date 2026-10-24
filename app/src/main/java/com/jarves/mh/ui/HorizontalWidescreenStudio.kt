@@ -1,38 +1,23 @@
 package com.jarves.mh.ui
 
-import android.app.Activity
-import android.content.pm.ActivityInfo
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,409 +27,689 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.jarves.mh.ui.theme.EngineCyan
-import com.jarves.mh.ui.theme.EngineEmerald
-
-data class WidescreenRailItem(
-    val id: String,
-    val label: String,
-    val icon: ImageVector,
-    val badge: String? = null,
-    val accent: Boolean = false,
-)
+import com.jarves.mh.model.AgentKind
+import com.jarves.mh.model.Project
+import com.jarves.mh.ui.theme.ClaudeDarkBg
+import com.jarves.mh.ui.theme.ClaudeDarkBorder
+import com.jarves.mh.ui.theme.ClaudeDarkCard
+import com.jarves.mh.ui.theme.ClaudeDarkSurface
+import com.jarves.mh.ui.theme.ClaudeTerracotta
+import com.jarves.mh.ui.theme.ClaudeTextPrimary
+import com.jarves.mh.ui.theme.ClaudeTextSecondary
 
 /**
- * Brand-new v5.0 Animated 3D Isometric Voxel-Prism Logo (`CS Personal Engine`).
- * Replaces the old rounded icon everywhere with a breathing emerald/cyan isometric prism cube + orbital telemetry arc.
+ * Iconic 8-bit Pixel "Claw'd" Mascot from Claude Code (Mobile & PC CLI).
+ * Drawn with crisp mathematical pixel blocks in warm terracotta `#D97757` on dark `#0C0C0E`.
  */
+@Composable
+fun ClawdPixelMascot(
+    modifier: Modifier = Modifier,
+    size: Dp = 64.dp,
+    isRunning: Boolean = false,
+    showSparkles: Boolean = false,
+) {
+    val infinite = rememberInfiniteTransition(label = "clawd_anim")
+    val bobOffset by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = if (isRunning) -4f else -1.5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (isRunning) 420 else 1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "clawd_bob",
+    )
+    val starAlpha by infinite.animateFloat(
+        initialValue = 0.22f,
+        targetValue = 0.68f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "clawd_star",
+    )
+
+    val boxDp = if (showSparkles) size * 2.2f else size
+    Canvas(modifier = modifier.size(boxDp)) {
+        val totalW = this.size.width
+        val totalH = this.size.height
+
+        if (showSparkles) {
+            // Subtle pixel stars around Claw'd just like the official Claude Code mobile empty screen
+            val starColor = ClaudeTerracotta.copy(alpha = starAlpha)
+            val s = (totalW * 0.018f).coerceAtLeast(2f)
+            fun drawPixelStar(cx: Float, cy: Float) {
+                drawRect(starColor, Offset(cx - s * 1.5f, cy - s * 0.5f), Size(s * 3f, s))
+                drawRect(starColor, Offset(cx - s * 0.5f, cy - s * 1.5f), Size(s, s * 3f))
+            }
+            drawPixelStar(totalW * 0.72f, totalH * 0.14f)
+            drawPixelStar(totalW * 0.14f, totalH * 0.42f)
+            drawPixelStar(totalW * 0.78f, totalH * 0.84f)
+        }
+
+        val spriteW = if (showSparkles) totalW * 0.44f else totalW * 0.88f
+        // 13x10 pixel grid for exact Claw'd proportions
+        val px = spriteW / 13f
+        val spriteH = px * 10f
+        val ox = (totalW - spriteW) * 0.5f
+        val oy = (totalH - spriteH) * 0.5f + bobOffset
+
+        val bodyColor = ClaudeTerracotta
+        val eyeColor = Color(0xFF0C0C0E)
+
+        fun block(gx: Int, gy: Int, gw: Int, gh: Int, color: Color) {
+            drawRect(
+                color = color,
+                topLeft = Offset(ox + gx * px, oy + gy * px),
+                size = Size(gw * px + 0.4f, gh * px + 0.4f),
+            )
+        }
+
+        // Main rectangular head/body: cols 2..10 (9 wide), rows 1..6 (6 tall)
+        block(2, 1, 9, 6, bodyColor)
+        // Left & right side pixel arms: col 1 & col 11, rows 3..4 (2 tall)
+        block(1, 3, 1, 2, bodyColor)
+        block(11, 3, 1, 2, bodyColor)
+        // 4 pixel legs: cols 3, 5, 7, 9, rows 7..8 (2 tall)
+        block(3, 7, 1, 2, bodyColor)
+        block(5, 7, 1, 2, bodyColor)
+        block(7, 7, 1, 2, bodyColor)
+        block(9, 7, 1, 2, bodyColor)
+        // Two dark square pixel eyes: col 3 & col 9, row 3
+        block(3, 3, 1, 2, eyeColor)
+        block(9, 3, 1, 2, eyeColor)
+    }
+}
+
+/** Compatibility alias used by BrandMark & onboarding screens. */
 @Composable
 fun VoxelPrismBrandMark(
     modifier: Modifier = Modifier,
     size: Dp = 36.dp,
     isRunning: Boolean = false,
 ) {
-    val infinite = rememberInfiniteTransition(label = "voxel_prism")
-    val orbitAngle by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isRunning) 2600 else 9000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "orbit_angle",
-    )
-    val coreGlow by infinite.animateFloat(
-        initialValue = 0.78f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isRunning) 650 else 1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "core_glow",
-    )
-
-    Canvas(modifier = modifier.size(size)) {
-        val w = this.size.width
-        val h = this.size.height
-        val cx = w * 0.5f
-        val cy = h * 0.5f
-        val r = (this.size.minDimension * 0.36f) * coreGlow
-
-        // Subtle emerald radial aura
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(EngineEmerald.copy(alpha = 0.24f), Color.Transparent),
-                center = Offset(cx, cy),
-                radius = this.size.minDimension * 0.54f,
-            ),
-            radius = this.size.minDimension * 0.52f,
-            center = Offset(cx, cy),
-        )
-
-        // Rotating orbital telemetry arc
-        rotate(degrees = orbitAngle, pivot = Offset(cx, cy)) {
-            drawArc(
-                brush = Brush.sweepGradient(
-                    listOf(Color.Transparent, EngineEmerald.copy(alpha = 0.75f), EngineCyan, Color.Transparent),
-                ),
-                startAngle = 0f,
-                sweepAngle = 210f,
-                useCenter = false,
-                style = Stroke(width = (w * 0.055f).coerceAtLeast(1.4f), cap = StrokeCap.Round),
-            )
-        }
-
-        // Isometric 3D Voxel-Prism Cube
-        val dx = r * 0.86f
-        val dy = r * 0.50f
-
-        // Top Diamond Facet (Emerald Mint)
-        val topFace = Path().apply {
-            moveTo(cx, cy - r)
-            lineTo(cx + dx, cy - dy)
-            lineTo(cx, cy)
-            lineTo(cx - dx, cy - dy)
-            close()
-        }
-        drawPath(
-            path = topFace,
-            brush = Brush.linearGradient(
-                colors = listOf(Color(0xFF6EE7B7), EngineEmerald),
-                start = Offset(cx, cy - r),
-                end = Offset(cx, cy),
-            ),
-        )
-
-        // Left Facet (Deep Obsidian Slate)
-        val leftFace = Path().apply {
-            moveTo(cx - dx, cy - dy)
-            lineTo(cx, cy)
-            lineTo(cx, cy + r)
-            lineTo(cx - dx, cy + dy)
-            close()
-        }
-        drawPath(
-            path = leftFace,
-            brush = Brush.linearGradient(
-                colors = listOf(Color(0xFF1E293B), Color(0xFF0F172A)),
-                start = Offset(cx - dx, cy - dy),
-                end = Offset(cx, cy + r),
-            ),
-        )
-
-        // Right Facet (Electric Cyan-Emerald)
-        val rightFace = Path().apply {
-            moveTo(cx, cy)
-            lineTo(cx + dx, cy - dy)
-            lineTo(cx + dx, cy + dy)
-            lineTo(cx, cy + r)
-            close()
-        }
-        drawPath(
-            path = rightFace,
-            brush = Brush.linearGradient(
-                colors = listOf(EngineCyan, Color(0xFF0284C7)),
-                start = Offset(cx, cy),
-                end = Offset(cx + dx, cy + r),
-            ),
-        )
-
-        // Crisp center vertex highlight
-        drawLine(
-            color = Color(0xFFF8FAFC).copy(alpha = 0.85f),
-            start = Offset(cx - dx * 0.5f, cy - dy * 0.5f),
-            end = Offset(cx, cy),
-            strokeWidth = (w * 0.045f).coerceAtLeast(1.1f),
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = Color(0xFFF8FAFC).copy(alpha = 0.85f),
-            start = Offset(cx + dx * 0.5f, cy - dy * 0.5f),
-            end = Offset(cx, cy),
-            strokeWidth = (w * 0.045f).coerceAtLeast(1.1f),
-            cap = StrokeCap.Round,
-        )
-    }
+    ClawdPixelMascot(modifier = modifier, size = size, isRunning = isRunning, showSparkles = false)
 }
 
 /**
- * 1-tap Horizontal <-> Portrait orientation switcher so the user gets full Horizontal Widescreen
- * coding by default and can flip anytime with zero friction.
+ * 1:1 Pure-Dark Claude Code Mobile Home Screen ("Code" — matches the RIGHT screen in the user's screenshot).
+ * Ultra-simple, mobile-friendly, zero clutter!
  */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun StudioOrientationButton(
-    compact: Boolean = true,
-    modifier: Modifier = Modifier,
+fun ClaudeCodeMobileHomeScreen(
+    state: AppUiState,
+    listState: LazyListState,
+    activeModelDisplay: String,
+    onOpenProject: (Project) -> Unit,
+    onQuickNewSession: () -> Unit,
+    onCreateNamedProject: (String) -> Unit,
+    onRenameProject: (String, String) -> Unit,
+    onDeleteProject: (String) -> Unit,
+    onOpenFullPageCli: () -> Unit,
+    onOpenEngines: () -> Unit,
+    onOpenCustomProvider: () -> Unit,
+    onOpenCliHub: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onImportZipClick: () -> Unit,
+    onCloneGitUrl: (String) -> Unit,
+    onToggleMcSpecialist: (Boolean) -> Unit,
 ) {
-    val context = LocalContext.current
-    val config = LocalConfiguration.current
-    val isLandscape = config.screenWidthDp >= config.screenHeightDp
+    var showMenuSheet by rememberSaveable { mutableStateOf(false) }
+    var showNewDialog by rememberSaveable { mutableStateOf(false) }
+    var showCloneDialog by rememberSaveable { mutableStateOf(false) }
+    var newProjectName by rememberSaveable { mutableStateOf("") }
+    var cloneUrl by rememberSaveable { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<Project?>(null) }
+    var renameDraft by rememberSaveable { mutableStateOf("") }
 
-    Surface(
-        onClick = {
-            val activity = context as? Activity ?: return@Surface
-            activity.requestedOrientation = if (isLandscape) {
-                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            }
-        },
-        modifier = modifier.size(if (compact) 30.dp else 36.dp),
-        shape = RoundedCornerShape(9.dp),
-        color = Color(0xFF121722),
-        border = BorderStroke(0.9.dp, Color(0xFF232C3D)),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = Icons.Default.ScreenRotation,
-                contentDescription = "Switch Horizontal / Vertical Orientation",
-                tint = if (isLandscape) EngineEmerald else Color(0xFF94A3B8),
-                modifier = Modifier.size(if (compact) 15.dp else 17.dp),
-            )
-        }
+    val projects = state.projects
+    val readyProjects = remember(projects, state.activeProject?.id) {
+        if (projects.isEmpty()) emptyList() else listOf(projects.first())
     }
-}
+    val idleProjects = remember(projects) {
+        if (projects.size <= 1) emptyList() else projects.drop(1)
+    }
 
-/**
- * Sleek Desktop-IDE Left Vertical Navigation Rail (`58dp` wide) built specifically for
- * Horizontal Widescreen coding — saves 100% of vertical screen height!
- */
-@Composable
-fun StudioWidescreenRail(
-    items: List<WidescreenRailItem>,
-    selectedId: String,
-    onSelect: (String) -> Unit,
-    isRunning: Boolean = false,
-    topSlot: (@Composable () -> Unit)? = null,
-    bottomSlot: (@Composable () -> Unit)? = null,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        color = Color(0xFF07090E),
-        border = BorderStroke(0.8.dp, Color(0xFF171E2C)),
-        modifier = modifier
-            .fillMaxHeight()
-            .width(60.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ClaudeDarkBg)
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(vertical = 6.dp, horizontal = 4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween,
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 96.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(5.dp),
-            ) {
-                if (topSlot != null) {
-                    topSlot()
-                    Spacer(Modifier.height(2.dp))
-                } else {
-                    VoxelPrismBrandMark(size = 30.dp, isRunning = isRunning)
-                    Spacer(Modifier.height(4.dp))
-                }
-
-                items.forEach { item ->
-                    val selected = item.id == selectedId
-                    val scale by animateFloatAsState(
-                        targetValue = if (selected) 1.0f else 0.94f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioLowBouncy,
-                            stiffness = Spring.StiffnessMediumLow,
-                        ),
-                        label = "rail_scale_${item.id}",
-                    )
-                    val indicatorHeight by animateDpAsState(
-                        targetValue = if (selected) 20.dp else 0.dp,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessMedium,
-                        ),
-                        label = "rail_ind_${item.id}",
-                    )
-                    val activeTint = if (item.accent) EngineCyan else EngineEmerald
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .scale(scale)
-                            .clickable { onSelect(item.id) },
-                        contentAlignment = Alignment.Center,
+            // Minimal Top Bar: `≡` on left, `>_` & `+` on right
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    IconButton(
+                        onClick = { showMenuSheet = true },
+                        modifier = Modifier.size(36.dp),
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = when {
-                                selected -> activeTint.copy(alpha = 0.16f)
-                                item.badge != null -> Color(0xFF101916)
-                                else -> Color.Transparent
-                            },
-                            border = if (selected) {
-                                BorderStroke(1.dp, activeTint.copy(alpha = 0.55f))
-                            } else if (item.badge != null) {
-                                BorderStroke(0.8.dp, EngineEmerald.copy(alpha = 0.35f))
-                            } else {
-                                null
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(2.dp),
-                            ) {
-                                Icon(
-                                    imageVector = item.icon,
-                                    contentDescription = item.label,
-                                    tint = when {
-                                        selected -> activeTint
-                                        item.accent -> EngineCyan.copy(alpha = 0.85f)
-                                        else -> Color(0xFF94A3B8)
-                                    },
-                                    modifier = Modifier.size(17.dp),
-                                )
-                                Text(
-                                    text = item.badge ?: item.label,
-                                    fontSize = 8.5.sp,
-                                    fontFamily = if (item.badge != null) FontFamily.Monospace else FontFamily.Default,
-                                    fontWeight = if (selected || item.badge != null) FontWeight.ExtraBold else FontWeight.Medium,
-                                    color = when {
-                                        selected -> Color(0xFFF8FAFC)
-                                        item.badge != null -> EngineEmerald
-                                        else -> Color(0xFF8B98AD)
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = "Menu",
+                            tint = ClaudeTextPrimary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
 
-                        if (indicatorHeight > 0.dp) {
-                            Box(
-                                modifier = Modifier
-                                    .align(Alignment.CenterStart)
-                                    .width(3.dp)
-                                    .height(indicatorHeight)
-                                    .background(activeTint, CircleShape),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        IconButton(
+                            onClick = onOpenFullPageCli,
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Terminal,
+                                contentDescription = "Full-Page CLI",
+                                tint = ClaudeTextSecondary,
+                                modifier = Modifier.size(19.dp),
+                            )
+                        }
+                        IconButton(
+                            onClick = { showNewDialog = true },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "New folder project",
+                                tint = ClaudeTextPrimary,
+                                modifier = Modifier.size(22.dp),
                             )
                         }
                     }
                 }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Editorial Serif "Code" Heading — 1:1 with user's screenshot!
+                Text(
+                    text = "Code",
+                    fontFamily = FontFamily.Serif,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = ClaudeTextPrimary,
+                )
+
+                Spacer(Modifier.height(22.dp))
             }
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+            if (projects.isEmpty()) {
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 56.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        ClawdPixelMascot(size = 64.dp, showSparkles = true)
+                        Text(
+                            text = "No sessions yet",
+                            fontSize = 15.sp,
+                            color = ClaudeTextSecondary,
+                        )
+                        Surface(
+                            onClick = onQuickNewSession,
+                            shape = CircleShape,
+                            color = ClaudeDarkCard,
+                            border = BorderStroke(1.dp, ClaudeDarkBorder),
+                        ) {
+                            Text(
+                                text = "New session",
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = ClaudeTextPrimary,
+                            )
+                        }
+                    }
+                }
+            } else {
+                if (readyProjects.isNotEmpty()) {
+                    item {
+                        Text(
+                            text = "Ready",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = ClaudeTextSecondary,
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
+                    }
+                    items(readyProjects, key = { it.id }) { project ->
+                        ClaudeSessionListRow(
+                            project = project,
+                            showOpenBadge = true,
+                            onOpen = { onOpenProject(project) },
+                            onRename = {
+                                renameTarget = project
+                                renameDraft = project.name
+                            },
+                            onDelete = { onDeleteProject(project.id) },
+                        )
+                    }
+                }
+
+                if (idleProjects.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(22.dp))
+                        Text(
+                            text = "Idle",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = ClaudeTextSecondary,
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
+                    }
+                    items(idleProjects, key = { it.id }) { project ->
+                        ClaudeSessionListRow(
+                            project = project,
+                            showOpenBadge = false,
+                            onOpen = { onOpenProject(project) },
+                            onRename = {
+                                renameTarget = project
+                                renameDraft = project.name
+                            },
+                            onDelete = { onDeleteProject(project.id) },
+                        )
+                    }
+                }
+            }
+        }
+
+        // Clean Floating Bottom "New session" Pill
+        Surface(
+            onClick = onQuickNewSession,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 18.dp),
+            shape = CircleShape,
+            color = ClaudeTerracotta,
+            shadowElevation = 6.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                bottomSlot?.invoke()
-                StudioOrientationButton(compact = true)
+                Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Text(
+                    text = "New session",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                )
+            }
+        }
+    }
+
+    if (showMenuSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showMenuSheet = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = ClaudeDarkSurface,
+            contentColor = ClaudeTextPrimary,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(bottom = 10.dp),
+                ) {
+                    ClawdPixelMascot(size = 28.dp)
+                    Column {
+                        Text("CS Personal Engine", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ClaudeTextPrimary)
+                        Text(activeModelDisplay, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = ClaudeTextSecondary)
+                    }
+                }
+                HorizontalDivider(color = ClaudeDarkBorder)
+
+                MinimalDrawerActionRow(Icons.Default.Terminal, "Open Full-Page CLI", "claude · opencode · codex · bash") {
+                    showMenuSheet = false
+                    onOpenFullPageCli()
+                }
+                MinimalDrawerActionRow(Icons.Default.AutoAwesome, "Model & Engine", "Antigravity · Claude · DeepSeek") {
+                    showMenuSheet = false
+                    onOpenEngines()
+                }
+                MinimalDrawerActionRow(Icons.Default.Add, "Custom Provider", "OpenAI / Anthropic / Groq / OpenRouter API") {
+                    showMenuSheet = false
+                    onOpenCustomProvider()
+                }
+                MinimalDrawerActionRow(Icons.Default.Code, "Install CLI Tools", "1-tap claude, opencode, codex, gemini, gh") {
+                    showMenuSheet = false
+                    onOpenCliHub()
+                }
+                MinimalDrawerActionRow(Icons.Default.FolderOpen, "Import ZIP or Clone Git", "Open existing Android / Java / Kotlin repo") {
+                    showMenuSheet = false
+                    showCloneDialog = true
+                }
+
+                // Quiet toggle for Minecraft Launcher Java/XML/Kotlin brain
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Java · XML · Kotlin + MC Brain", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = ClaudeTextPrimary)
+                        Text("Auto-send Minecraft Launcher & Android XML context", fontSize = 11.5.sp, color = ClaudeTextSecondary)
+                    }
+                    Switch(
+                        checked = state.mcJavaXmlSpecialistEnabled,
+                        onCheckedChange = onToggleMcSpecialist,
+                    )
+                }
+
+                HorizontalDivider(color = ClaudeDarkBorder)
+                MinimalDrawerActionRow(Icons.Default.Settings, "Settings", "Keys, Linux toolchains & diagnostics") {
+                    showMenuSheet = false
+                    onOpenSettings()
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+    }
+
+    if (showNewDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewDialog = false },
+            containerColor = ClaudeDarkSurface,
+            title = { Text("New project", color = ClaudeTextPrimary) },
+            text = {
+                OutlinedTextField(
+                    value = newProjectName,
+                    onValueChange = { newProjectName = it },
+                    singleLine = true,
+                    placeholder = { Text("mc-launcher") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = newProjectName.trim().ifBlank { "mc-launcher" }
+                        newProjectName = ""
+                        showNewDialog = false
+                        onCreateNamedProject(trimmed)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ClaudeTerracotta),
+                ) {
+                    Text("Create", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showCloneDialog) {
+        AlertDialog(
+            onDismissRequest = { showCloneDialog = false },
+            containerColor = ClaudeDarkSurface,
+            title = { Text("Import or Clone", color = ClaudeTextPrimary) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = cloneUrl,
+                        onValueChange = { cloneUrl = it },
+                        singleLine = true,
+                        placeholder = { Text("https://github.com/user/repo.git") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TextButton(
+                        onClick = {
+                            showCloneDialog = false
+                            onImportZipClick()
+                        },
+                    ) {
+                        Text("Or import .zip archive from phone")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val url = cloneUrl.trim()
+                        if (url.isNotEmpty()) {
+                            cloneUrl = ""
+                            showCloneDialog = false
+                            onCloneGitUrl(url)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ClaudeTerracotta),
+                ) {
+                    Text("Clone", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCloneDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            containerColor = ClaudeDarkSurface,
+            title = { Text("Rename session", color = ClaudeTextPrimary) },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val next = renameDraft.trim()
+                        if (next.isNotEmpty()) onRenameProject(target.id, next)
+                        renameTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ClaudeTerracotta),
+                ) {
+                    Text("Save", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameTarget = null }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ClaudeSessionListRow(
+    project: Project,
+    showOpenBadge: Boolean,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = { menuOpen = true },
+            )
+            .padding(vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = project.name,
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = ClaudeTextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "workspace/${project.slug}",
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                color = ClaudeTextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (showOpenBadge) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFF13261B),
+                    border = BorderStroke(0.7.dp, Color(0xFF224630)),
+                ) {
+                    Text(
+                        text = "Open",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF4ADE80),
+                    )
+                }
+            }
+            Box {
+                IconButton(
+                    onClick = { menuOpen = true },
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MoreHoriz,
+                        contentDescription = "Options",
+                        tint = ClaudeTextSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, null, modifier = Modifier.size(17.dp)) },
+                        onClick = { menuOpen = false; onRename() },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Delete") },
+                        leadingIcon = { Icon(Icons.Default.DeleteOutline, null, modifier = Modifier.size(17.dp)) },
+                        onClick = { menuOpen = false; onDelete() },
+                    )
+                }
             }
         }
     }
 }
 
-/**
- * Smooth Spring-Physics Horizontal Widescreen Pane Transition Host.
- */
 @Composable
-fun <T> StudioAnimatedPaneHost(
-    targetState: T,
-    modifier: Modifier = Modifier,
-    content: @Composable (T) -> Unit,
+private fun MinimalDrawerActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
 ) {
-    AnimatedContent(
-        targetState = targetState,
-        modifier = modifier,
-        transitionSpec = {
-            (fadeIn(animationSpec = tween(190, easing = FastOutSlowInEasing)) +
-                slideInHorizontally(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
-                    initialOffsetX = { fullWidth -> fullWidth / 18 },
-                ) +
-                scaleIn(
-                    initialScale = 0.985f,
-                    animationSpec = tween(190, easing = FastOutSlowInEasing),
-                )) togetherWith
-                (fadeOut(animationSpec = tween(130)) +
-                    slideOutHorizontally(
-                        animationSpec = tween(140),
-                        targetOffsetX = { fullWidth -> -fullWidth / 24 },
-                    )) using SizeTransform(clip = true)
-        },
-        label = "studio_widescreen_pane",
-    ) { state ->
-        content(state)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = ClaudeTextSecondary, modifier = Modifier.size(20.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 14.5.sp, fontWeight = FontWeight.Medium, color = ClaudeTextPrimary)
+            Text(subtitle, fontSize = 11.5.sp, color = ClaudeTextSecondary)
+        }
     }
 }
 
 /**
- * Dedicated Horizontal Widescreen **Minecraft Launcher + Java / Android XML / Kotlin Studio** (`MC Kit` tab).
- * Gives 1-tap engineering blueprints + live toggle for the specialist AI system brain!
+ * Mobile-Friendly Pure-Dark Minecraft Launcher (Java + XML + Kotlin) Specialist Blueprint Deck.
  */
 @Composable
 fun MinecraftLauncherStudioDeck(
@@ -452,79 +717,39 @@ fun MinecraftLauncherStudioDeck(
     onToggleSpecialistBrain: (Boolean) -> Unit,
     onRunBlueprintPrompt: (String) -> Unit,
     onOpenTerminalCommand: (String) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
-    val stackChips = listOf(
-        "Java 8 / 17 / 21",
-        "Android XML Layouts",
-        "Kotlin + ViewBinding",
-        "Mojang Manifest v2",
-        "ARM64 libjli.so + LWJGL3",
-        "GL4ES / Zink Vulkan",
-        "Fabric + Modrinth API",
-        "Xbox Live / XSTS / Offline Auth",
-    )
-
     LazyColumn(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF07090E)),
-        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+            .background(ClaudeDarkBg),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF0E131D),
-                border = BorderStroke(1.dp, EngineEmerald.copy(alpha = 0.45f)),
+                shape = RoundedCornerShape(14.dp),
+                color = ClaudeDarkSurface,
+                border = BorderStroke(0.9.dp, ClaudeDarkBorder),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    modifier = Modifier.padding(14.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        VoxelPrismBrandMark(size = 38.dp, isRunning = specialistBrainEnabled)
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            ) {
-                                Text(
-                                    text = "MINECRAFT LAUNCHER · JAVA + XML + KOTLIN BRAIN",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 0.6.sp,
-                                    color = EngineEmerald,
-                                )
-                                Surface(
-                                    shape = CircleShape,
-                                    color = EngineEmerald.copy(alpha = 0.16f),
-                                ) {
-                                    Text(
-                                        text = if (specialistBrainEnabled) "ACTIVE ON PROMPTS" else "PAUSED",
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = EngineEmerald,
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "Auto-injects Mojang Manifest v2, SHA-1 Asset Downloader, Xbox/XSTS Auth, ARM64 OpenJDK libjli.so + LWJGL3/GL4ES/Zink specs, and strict Java + Android XML + Kotlin architecture into every AI prompt.",
-                                fontSize = 11.5.sp,
-                                lineHeight = 16.sp,
-                                color = Color(0xFFCBD5E1),
-                            )
-                        }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Java · Android XML · Kotlin Brain",
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ClaudeTextPrimary,
+                        )
+                        Text(
+                            text = "Mojang manifests, Fabric/Modrinth APIs, ARM64 JRE 8/17/21 JNI & XML UI blueprints",
+                            fontSize = 12.sp,
+                            color = ClaudeTextSecondary,
+                        )
                     }
-                    Spacer(Modifier.width(10.dp))
                     Switch(
                         checked = specialistBrainEnabled,
                         onCheckedChange = onToggleSpecialistBrain,
@@ -535,125 +760,79 @@ fun MinecraftLauncherStudioDeck(
 
         item {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                stackChips.forEach { tag ->
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0xFF111723),
-                        border = BorderStroke(0.8.dp, Color(0xFF222D40)),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        ) {
-                            Icon(Icons.Default.Bolt, contentDescription = null, tint = EngineCyan, modifier = Modifier.size(12.dp))
-                            Text(tag, fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE2E8F0))
-                        }
-                    }
-                }
-                Surface(
-                    onClick = {
-                        onOpenTerminalCommand("apt-get update && apt-get install -y openjdk-17-jdk gradle maven kotlin")
-                    },
-                    shape = CircleShape,
-                    color = EngineCyan.copy(alpha = 0.16f),
-                    border = BorderStroke(0.9.dp, EngineCyan.copy(alpha = 0.5f)),
+                OutlinedButton(
+                    onClick = { onOpenTerminalCommand("java -version && javac -version") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        Icon(Icons.Default.Code, contentDescription = null, tint = EngineCyan, modifier = Modifier.size(13.dp))
-                        Text("Install JDK 17 + Gradle + Kotlin in Console", fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, color = EngineCyan)
-                    }
+                    Text("Check JDK", fontSize = 12.sp)
+                }
+                OutlinedButton(
+                    onClick = { onOpenTerminalCommand("./gradlew assembleDebug") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text("Gradle Build", fontSize = 12.sp)
                 }
             }
         }
 
-        // 2-Column Horizontal Widescreen Blueprint Cards
-        items(MinecraftLauncherKnowledge.blueprints.chunked(2)) { rowPair ->
-            Row(
+        items(MinecraftLauncherKnowledge.blueprints, key = { it.id }) { bp ->
+            Surface(
+                onClick = { onRunBlueprintPrompt(bp.prompt) },
+                shape = RoundedCornerShape(14.dp),
+                color = ClaudeDarkSurface,
+                border = BorderStroke(0.8.dp, ClaudeDarkBorder),
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                rowPair.forEach { bp ->
-                    Surface(
-                        onClick = { onRunBlueprintPrompt(bp.prompt) },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color(0xFF0E131D),
-                        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Column(
-                            modifier = Modifier.padding(13.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = ClaudeTerracotta.copy(alpha = 0.14f),
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = EngineEmerald.copy(alpha = 0.15f),
-                                    border = BorderStroke(0.8.dp, EngineEmerald.copy(alpha = 0.45f)),
-                                ) {
-                                    Text(
-                                        text = bp.badge,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 9.5.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = EngineEmerald,
-                                    )
-                                }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                                ) {
-                                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = EngineCyan, modifier = Modifier.size(13.dp))
-                                    Text("Generate", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = EngineCyan)
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = EngineCyan, modifier = Modifier.size(13.dp))
-                                }
-                            }
                             Text(
-                                text = bp.title,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color(0xFFF8FAFC),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = bp.stackLabel,
-                                fontFamily = FontFamily.Monospace,
+                                text = bp.badge,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                                 fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.SemiBold,
-                                color = EngineCyan,
-                                maxLines = 1,
-                            )
-                            Text(
-                                text = bp.summary,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                color = Color(0xFF94A3B8),
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
+                                color = ClaudeTerracotta,
                             )
                         }
+                        Text(
+                            text = bp.stackLabel,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = ClaudeTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
-                }
-                if (rowPair.size == 1) {
-                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = bp.title,
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ClaudeTextPrimary,
+                    )
+                    Text(
+                        text = bp.summary,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = ClaudeTextSecondary,
+                    )
                 }
             }
         }
     }
 }
+

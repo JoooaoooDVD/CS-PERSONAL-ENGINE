@@ -387,8 +387,8 @@ class Vt100TerminalEmulator(
                 onReplyToPty?.invoke("\u001B]10;rgb:e6e6/eded/f3f3\u001B\\")
             }
             raw == "11;?" -> {
-                // Terminal background color query -> instant dark theme detection for OpenCode / Neovim!
-                onReplyToPty?.invoke("\u001B]11;rgb:0606/0808/0c0c\u001B\\")
+                // Terminal background color query -> instant dark theme detection for Claude Code / OpenCode!
+                onReplyToPty?.invoke("\u001B]11;rgb:0c0c/0c0c/0e0e\u001B\\")
             }
         }
     }
@@ -891,10 +891,10 @@ class Vt100TerminalEmulator(
         const val FLAG_UNDERLINE = 8
         const val FLAG_INVERSE = 16
 
-        const val DEFAULT_FG = 0xFFE6EDF3.toInt()
+        const val DEFAULT_FG = 0xFFF4F4F6.toInt()
         const val DEFAULT_BG = 0x00000000
-        const val CURSOR_FG = 0xFF06080C.toInt()
-        const val CURSOR_BG = 0xFF34D399.toInt()
+        const val CURSOR_FG = 0xFF0C0C0E.toInt()
+        const val CURSOR_BG = 0xFFD97757.toInt()
 
         private val ANSI_16_COLORS = intArrayOf(
             0xFF16181D.toInt(), // 0 Black

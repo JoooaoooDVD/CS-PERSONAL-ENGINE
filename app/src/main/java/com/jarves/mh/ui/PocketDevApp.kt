@@ -81,7 +81,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -2510,177 +2512,200 @@ private fun RootScreenHost(
     val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
     val terminalCurrentCommand by viewModel.terminalCurrentCommand.collectAsStateWithLifecycle()
 
-    val rootRailItems = listOf(
-        WidescreenRailItem("PROJECTS", "Spaces", RootScreen.PROJECTS.icon),
-        WidescreenRailItem("CONSOLE", "Console", Icons.Default.Terminal, accent = true),
-        WidescreenRailItem("AGENT", "Engines", RootScreen.AGENT.icon),
-        WidescreenRailItem("SETTINGS", "Config", RootScreen.SETTINGS.icon),
-    )
+    val importZipHomeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) viewModel.importZipProject(uri)
+    }
+    val activeHomeModelLabel = remember(state.agentKind, state.antigravityModel, state.provider, state.savedCustomProviders, state.activeCustomProviderId) {
+        val custom = state.savedCustomProviders.firstOrNull { state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId }
+        when {
+            state.agentKind == AgentKind.ANTIGRAVITY -> "antigravity · ${formatAntigravityModelName(state.antigravityModel.ifBlank { "gemini-3.8-flash-high" })}"
+            custom != null -> "${custom.name} · ${custom.model}"
+            else -> "${state.agentKind.localizedTitle()} · ${state.provider.model.ifBlank { state.provider.kind.localizedTitle() }}"
+        }
+    }
 
-    Row(
+    BackHandler(enabled = activeNavId != "PROJECTS") {
+        activeNavId = "PROJECTS"
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF07090E)),
+            .background(Color(0xFF0C0C0E)),
     ) {
-        StudioWidescreenRail(
-            items = rootRailItems,
-            selectedId = if (showQuickTerminal) "CONSOLE" else activeNavId,
-            onSelect = { id ->
-                if (id == "CONSOLE") {
-                    activeNavId = "CONSOLE"
-                    showQuickTerminal = false
-                } else {
-                    showQuickTerminal = false
-                    activeNavId = id
+        when (activeNavId) {
+            "PROJECTS" -> ClaudeCodeMobileHomeScreen(
+                state = state,
+                listState = projectsListState,
+                activeModelDisplay = activeHomeModelLabel,
+                onOpenProject = viewModel::openProject,
+                onQuickNewSession = viewModel::createQuickProject,
+                onCreateNamedProject = viewModel::createProject,
+                onRenameProject = viewModel::renameProject,
+                onDeleteProject = viewModel::deleteProject,
+                onOpenFullPageCli = { activeNavId = "CONSOLE" },
+                onOpenEngines = { activeNavId = "AGENT" },
+                onOpenCustomProvider = { showHomeCustomProvider = true },
+                onOpenCliHub = { showHomeCliHub = true },
+                onOpenSettings = { activeNavId = "SETTINGS" },
+                onImportZipClick = { importZipHomeLauncher.launch("application/zip") },
+                onCloneGitUrl = viewModel::clonePublicGitRepository,
+                onToggleMcSpecialist = viewModel::setMcJavaXmlSpecialistEnabled,
+            )
+            "CONSOLE" -> TerminalScreen(
+                lines = terminalLines,
+                isRunning = isTerminalRunning,
+                onRun = viewModel::runTerminalCommand,
+                onInput = viewModel::sendTerminalInput,
+                onInterrupt = viewModel::interruptTerminalCommand,
+                onClear = viewModel::clearTerminal,
+                onToggleTheme = viewModel::toggleTheme,
+                themeMode = state.themeMode,
+                liveOutput = terminalLiveOutput,
+                currentCommand = terminalCurrentCommand,
+                showThemeAction = false,
+                showQuickCommands = true,
+                compactHeader = true,
+                interactivePtyMode = state.interactivePtyMode,
+                onTogglePtyMode = viewModel::setInteractivePtyMode,
+                ptyBuffer = state.ptyTerminalBuffer,
+                ptySnapshot = state.ptySnapshot,
+                ptyAlive = state.ptyTerminalAlive,
+                sessionTabs = state.ptySessionTabs,
+                activeSessionTabId = state.activePtySessionId,
+                onSelectSessionTab = viewModel::selectQuickPtyTab,
+                onNewSessionTab = viewModel::newQuickPtyTab,
+                onCloseSessionTab = viewModel::closeQuickPtyTab,
+                onEnsurePtyStarted = viewModel::ensureQuickPtyStarted,
+                onSendPtyCommand = viewModel::sendQuickPtyCommand,
+                onSendPtyRaw = viewModel::sendQuickPtyRaw,
+                onPastePty = viewModel::pasteQuickPty,
+                onResizePty = viewModel::resizeQuickPty,
+                onInterruptPty = viewModel::interruptQuickPty,
+                onClearPty = viewModel::clearQuickPty,
+                onRestartPty = viewModel::restartQuickPty,
+                onOpenCliHub = { showHomeCliHub = true },
+                onCloseFullScreen = { activeNavId = "PROJECTS" },
+            )
+            "AGENT" -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0C0C0E))
+                    .statusBarsPadding(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = { activeNavId = "PROJECTS" }, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Back", tint = Color(0xFFF4F4F6))
+                    }
+                    Text("Models & Engines", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFF4F4F6))
                 }
-            },
-            isRunning = state.isRunning || isTerminalRunning,
-        )
-
-        StudioAnimatedPaneHost(
-            targetState = activeNavId,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight(),
-        ) { paneId ->
-            when (paneId) {
-                "PROJECTS" -> ProjectsScreen(
-                    state = state,
-                    listState = projectsListState,
-                    onOpen = viewModel::openProject,
-                    onCreate = viewModel::createProject,
-                    onCreateAndroid = viewModel::createAndroidProject,
-                    onCreateQuickProject = viewModel::createQuickProject,
-                    onImportZip = viewModel::importZipProject,
-                    onCloneGit = viewModel::clonePublicGitRepository,
-                    onStartGitHubLogin = viewModel::startGitHubLogin,
-                    onGenerateNewGitHubCode = viewModel::generateNewGitHubCode,
-                    onRefreshGitHub = viewModel::refreshGitHubRepositories,
-                    onDisconnectGitHub = viewModel::disconnectGitHub,
-                    onCloneGitHub = viewModel::cloneGitHubRepository,
-                    onRenameProject = viewModel::renameProject,
-                    onDeleteProject = viewModel::deleteProject,
-                    onSettings = { activeNavId = "SETTINGS" },
-                    onPing = viewModel::pingApi,
-                    onToggleTheme = viewModel::toggleTheme,
-                    onInstallUpdate = viewModel::installAppUpdate,
-                    onOpenAgentHub = { activeNavId = "AGENT" },
-                    onOpenCustomProvider = { showHomeCustomProvider = true },
-                    onOpenCliHub = { showHomeCliHub = true },
-                    onOpenQuickConsole = { activeNavId = "CONSOLE" },
-                )
-                "CONSOLE" -> TerminalScreen(
-                    lines = terminalLines,
-                    isRunning = isTerminalRunning,
-                    onRun = viewModel::runTerminalCommand,
-                    onInput = viewModel::sendTerminalInput,
-                    onInterrupt = viewModel::interruptTerminalCommand,
-                    onClear = viewModel::clearTerminal,
-                    onToggleTheme = viewModel::toggleTheme,
-                    themeMode = state.themeMode,
-                    liveOutput = terminalLiveOutput,
-                    currentCommand = terminalCurrentCommand,
-                    showThemeAction = false,
-                    showQuickCommands = true,
-                    compactHeader = true,
-                    interactivePtyMode = state.interactivePtyMode,
-                    onTogglePtyMode = viewModel::setInteractivePtyMode,
-                    ptyBuffer = state.ptyTerminalBuffer,
-                    ptySnapshot = state.ptySnapshot,
-                    ptyAlive = state.ptyTerminalAlive,
-                    sessionTabs = state.ptySessionTabs,
-                    activeSessionTabId = state.activePtySessionId,
-                    onSelectSessionTab = viewModel::selectQuickPtyTab,
-                    onNewSessionTab = viewModel::newQuickPtyTab,
-                    onCloseSessionTab = viewModel::closeQuickPtyTab,
-                    onEnsurePtyStarted = viewModel::ensureQuickPtyStarted,
-                    onSendPtyCommand = viewModel::sendQuickPtyCommand,
-                    onSendPtyRaw = viewModel::sendQuickPtyRaw,
-                    onPastePty = viewModel::pasteQuickPty,
-                    onResizePty = viewModel::resizeQuickPty,
-                    onInterruptPty = viewModel::interruptQuickPty,
-                    onClearPty = viewModel::clearQuickPty,
-                    onRestartPty = viewModel::restartQuickPty,
-                    onOpenCliHub = { showHomeCliHub = true },
-                )
-                "AGENT" -> AgentScreen(
-                    state = state,
-                    onSaveProvider = { profile, key ->
-                        viewModel.updateProvider(profile, key)
-                    },
-                    onDiscoverModels = viewModel::discoverModels,
-                    onValidateProvider = viewModel::validateProvider,
-                    onPing = viewModel::pingApi,
-                    getSavedApiKey = viewModel::getSavedApiKey,
-                    getSavedApiKeys = viewModel::getSavedApiKeys,
-                    onAddApiKey = viewModel::addApiKey,
-                    onActivateApiKey = viewModel::activateApiKey,
-                    onRemoveApiKey = viewModel::removeApiKey,
-                    onSelectAgent = viewModel::selectAgent,
-                    onInstallAgent = viewModel::installAgent,
-                    onCheckAgentUpdates = viewModel::checkAgentUpdates,
-                    onUpdateAgent = viewModel::updateAgent,
-                    onStartAntigravityLogin = viewModel::startAntigravityLogin,
-                    onSubmitAntigravityCode = viewModel::submitAntigravityCode,
-                    onLogoutAntigravity = viewModel::logoutAntigravity,
-                    onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
-                    onSetAntigravityModel = viewModel::setAntigravityModel,
-                    onSetAntigravityEffort = viewModel::setAntigravityEffort,
-                    onSaveCustomProvider = viewModel::saveAndActivateCustomProvider,
-                    onActivateCustomProvider = viewModel::activateCustomProvider,
-                    onDeleteCustomProvider = viewModel::deleteCustomProvider,
-                    getCustomProviderApiKey = viewModel::getCustomProviderApiKey,
-                    onRunCliInTerminal = { cliCmd ->
-                        activeNavId = "CONSOLE"
-                        if (state.interactivePtyMode) {
-                            viewModel.sendQuickPtyCommand(cliCmd)
-                        } else {
-                            viewModel.runTerminalCommand(cliCmd)
-                        }
-                    },
-                    onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
-                    onRemoveCustomCli = viewModel::removeCustomCliPackage,
-                    onSetFullAccessTerminal = viewModel::setFullAccessTerminalEnabled,
-                )
-                else -> SettingsScreen(
-                    state = state,
-                    onSaveProvider = { profile, key ->
-                        viewModel.updateProvider(profile, key)
-                    },
-                    onDiscoverModels = viewModel::discoverModels,
-                    onValidateProvider = viewModel::validateProvider,
-                    onSetThemeMode = viewModel::setThemeMode,
-                    onSetLanguage = viewModel::setLanguage,
-                    onPing = viewModel::pingApi,
-                    onClearTerminal = viewModel::clearTerminal,
-                    getSavedApiKey = viewModel::getSavedApiKey,
-                    getSavedApiKeys = viewModel::getSavedApiKeys,
-                    onAddApiKey = viewModel::addApiKey,
-                    onActivateApiKey = viewModel::activateApiKey,
-                    onRemoveApiKey = viewModel::removeApiKey,
-                    onInstallDevStack = viewModel::installDevStack,
-                    onRemoveDevStack = viewModel::removeDevStack,
-                    onInstallAgent = viewModel::installAgent,
-                    onCheckAgentUpdates = viewModel::checkAgentUpdates,
-                    onUpdateAgent = viewModel::updateAgent,
-                    onStartAntigravityLogin = viewModel::startAntigravityLogin,
-                    onSubmitAntigravityCode = viewModel::submitAntigravityCode,
-                    onLogoutAntigravity = viewModel::logoutAntigravity,
-                    onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
-                    onSetAntigravityModel = viewModel::setAntigravityModel,
-                    onSetAntigravityEffort = viewModel::setAntigravityEffort,
-                    initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
-                    onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
-                    onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
-                    onRefreshDiagnostics = viewModel::refreshDeveloperDiagnostics,
-                    onStopInactiveProcesses = viewModel::stopInactiveDeveloperProcesses,
-                    onClearRuntimeCache = viewModel::clearDeveloperRuntimeCache,
-                    onSetAutoContextEnabled = viewModel::setAutoContextEnabled,
-                    onSetAutoRunChatCommands = viewModel::setAutoRunChatCommands,
-                    onSaveCustomSystemInstructions = viewModel::saveCustomSystemInstructions,
-                    onSaveGitHubPat = viewModel::saveGitHubPat,
-                    onClearGitHubPat = viewModel::clearGitHubPat,
-                )
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    AgentScreen(
+                        state = state,
+                        onSaveProvider = { profile, key ->
+                            viewModel.updateProvider(profile, key)
+                        },
+                        onDiscoverModels = viewModel::discoverModels,
+                        onValidateProvider = viewModel::validateProvider,
+                        onPing = viewModel::pingApi,
+                        getSavedApiKey = viewModel::getSavedApiKey,
+                        getSavedApiKeys = viewModel::getSavedApiKeys,
+                        onAddApiKey = viewModel::addApiKey,
+                        onActivateApiKey = viewModel::activateApiKey,
+                        onRemoveApiKey = viewModel::removeApiKey,
+                        onSelectAgent = viewModel::selectAgent,
+                        onInstallAgent = viewModel::installAgent,
+                        onCheckAgentUpdates = viewModel::checkAgentUpdates,
+                        onUpdateAgent = viewModel::updateAgent,
+                        onStartAntigravityLogin = viewModel::startAntigravityLogin,
+                        onSubmitAntigravityCode = viewModel::submitAntigravityCode,
+                        onLogoutAntigravity = viewModel::logoutAntigravity,
+                        onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
+                        onSetAntigravityModel = viewModel::setAntigravityModel,
+                        onSetAntigravityEffort = viewModel::setAntigravityEffort,
+                        onSaveCustomProvider = viewModel::saveAndActivateCustomProvider,
+                        onActivateCustomProvider = viewModel::activateCustomProvider,
+                        onDeleteCustomProvider = viewModel::deleteCustomProvider,
+                        getCustomProviderApiKey = viewModel::getCustomProviderApiKey,
+                        onRunCliInTerminal = { cliCmd ->
+                            activeNavId = "CONSOLE"
+                            if (state.interactivePtyMode) {
+                                viewModel.sendQuickPtyCommand(cliCmd)
+                            } else {
+                                viewModel.runTerminalCommand(cliCmd)
+                            }
+                        },
+                        onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
+                        onRemoveCustomCli = viewModel::removeCustomCliPackage,
+                        onSetFullAccessTerminal = viewModel::setFullAccessTerminalEnabled,
+                    )
+                }
+            }
+            else -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0C0C0E))
+                    .statusBarsPadding(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = { activeNavId = "PROJECTS" }, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Back", tint = Color(0xFFF4F4F6))
+                    }
+                    Text("Settings", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFF4F4F6))
+                }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    SettingsScreen(
+                        state = state,
+                        onSaveProvider = { profile, key ->
+                            viewModel.updateProvider(profile, key)
+                        },
+                        onDiscoverModels = viewModel::discoverModels,
+                        onValidateProvider = viewModel::validateProvider,
+                        onSetThemeMode = viewModel::setThemeMode,
+                        onSetLanguage = viewModel::setLanguage,
+                        onPing = viewModel::pingApi,
+                        onClearTerminal = viewModel::clearTerminal,
+                        getSavedApiKey = viewModel::getSavedApiKey,
+                        getSavedApiKeys = viewModel::getSavedApiKeys,
+                        onAddApiKey = viewModel::addApiKey,
+                        onActivateApiKey = viewModel::activateApiKey,
+                        onRemoveApiKey = viewModel::removeApiKey,
+                        onInstallDevStack = viewModel::installDevStack,
+                        onRemoveDevStack = viewModel::removeDevStack,
+                        onInstallAgent = viewModel::installAgent,
+                        onCheckAgentUpdates = viewModel::checkAgentUpdates,
+                        onUpdateAgent = viewModel::updateAgent,
+                        onStartAntigravityLogin = viewModel::startAntigravityLogin,
+                        onSubmitAntigravityCode = viewModel::submitAntigravityCode,
+                        onLogoutAntigravity = viewModel::logoutAntigravity,
+                        onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
+                        onSetAntigravityModel = viewModel::setAntigravityModel,
+                        onSetAntigravityEffort = viewModel::setAntigravityEffort,
+                        initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
+                        onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
+                        onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
+                        onRefreshDiagnostics = viewModel::refreshDeveloperDiagnostics,
+                        onStopInactiveProcesses = viewModel::stopInactiveDeveloperProcesses,
+                        onClearRuntimeCache = viewModel::clearDeveloperRuntimeCache,
+                        onSetAutoContextEnabled = viewModel::setAutoContextEnabled,
+                        onSetAutoRunChatCommands = viewModel::setAutoRunChatCommands,
+                        onSaveCustomSystemInstructions = viewModel::saveCustomSystemInstructions,
+                        onSaveGitHubPat = viewModel::saveGitHubPat,
+                        onClearGitHubPat = viewModel::clearGitHubPat,
+                    )
+                }
             }
         }
     }
@@ -4971,8 +4996,7 @@ private fun WorkspaceScreen(
         CliMarketplaceSheet(
             savedCustomClis = state.savedCustomClis,
             onRunCommandInTerminal = { cliCmd ->
-                if (studioMode != "SPLIT") studioMode = "CONSOLE"
-                else splitRightPane = "CONSOLE"
+                studioMode = "CONSOLE"
                 onTerminalOpened()
                 if (state.interactivePtyMode) {
                     onSendProjectPtyCommand(cliCmd)
@@ -4988,7 +5012,11 @@ private fun WorkspaceScreen(
 
     val totalWorkspaceAdditions = remember(state.changes) { state.changes.sumOf { it.additions } }
     val totalWorkspaceDeletions = remember(state.changes) { state.changes.sumOf { it.deletions } }
-    val isImmersiveConsole = studioMode == "CONSOLE" && terminalFullScreen
+    var showSessionOverflowMenu by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = studioMode != "STUDIO") {
+        studioMode = "STUDIO"
+    }
 
     val renderChatPane: @Composable () -> Unit = {
         ChatTab(
@@ -5021,7 +5049,7 @@ private fun WorkspaceScreen(
             onRemoveAttachment = onRemoveAttachment,
             onOpenAttachment = onOpenAttachment,
             onRunInTerminal = { command ->
-                if (studioMode == "SPLIT") splitRightPane = "CONSOLE" else studioMode = "CONSOLE"
+                studioMode = "CONSOLE"
                 onTerminalOpened()
                 onSendProjectPtyCommand(command)
             },
@@ -5037,12 +5065,9 @@ private fun WorkspaceScreen(
             autoRunCommands = state.autoRunChatCommands,
             onToggleAutoRunCommands = onSetAutoRunChatCommands,
             detectedServerPorts = state.detectedServerPorts,
-            onOpenServerPort = { port ->
-                onOpenServerPort(port)
-                studioMode = "WEB"
-            },
+            onOpenServerPort = { _ -> },
             onOpenTerminalTab = {
-                if (studioMode == "SPLIT") splitRightPane = "CONSOLE" else studioMode = "CONSOLE"
+                studioMode = "CONSOLE"
                 onTerminalOpened()
             },
             projectName = state.activeProject?.name ?: "Workspace",
@@ -5075,7 +5100,7 @@ private fun WorkspaceScreen(
             onKeepFileChange = onKeepFileChange,
             onUndoFileChange = onUndoFileChange,
             onOpenChangesTab = {
-                if (studioMode == "SPLIT") splitRightPane = "DIFFS" else studioMode = "DIFFS"
+                studioMode = "DIFFS"
             },
         )
     }
@@ -5123,7 +5148,7 @@ private fun WorkspaceScreen(
         )
     }
 
-    val renderConsolePane: @Composable (Boolean) -> Unit = { allowFullToggle ->
+    val renderConsolePane: @Composable () -> Unit = {
         TerminalScreen(
             lines = state.projectTerminalLines,
             isRunning = state.projectTerminalRunning,
@@ -5133,8 +5158,8 @@ private fun WorkspaceScreen(
             onClear = onTerminalClear,
             onToggleTheme = {},
             themeMode = state.themeMode,
-            title = stringResource(R.string.workspace_project_terminal),
-            subtitle = "${state.projectTerminalCwd} · Full Root Ubuntu PRoot",
+            title = state.activeProject?.name ?: "CLI",
+            subtitle = state.projectTerminalCwd,
             liveOutput = state.projectTerminalLiveOutput,
             currentCommand = state.projectTerminalCommand,
             commandDraft = state.projectTerminalDraft,
@@ -5142,12 +5167,12 @@ private fun WorkspaceScreen(
             promptPath = state.projectTerminalCwd,
             onStop = onTerminalStop,
             onFixWithAi = { cmd, out, code ->
-                if (studioMode != "SPLIT") studioMode = "STUDIO"
+                studioMode = "STUDIO"
                 onFixTerminalFailure(cmd, out, code)
             },
             showThemeAction = false,
             showQuickCommands = true,
-            compactHeader = !isImmersiveConsole,
+            compactHeader = true,
             interactivePtyMode = state.interactivePtyMode,
             onTogglePtyMode = onSetInteractivePtyMode,
             ptyBuffer = state.projectPtyTerminalBuffer,
@@ -5167,9 +5192,8 @@ private fun WorkspaceScreen(
             onClearPty = onClearProjectPty,
             onRestartPty = onRestartProjectPty,
             onOpenCliHub = { showWorkspaceCliHub = true },
-            onCloseFullScreen = if (isImmersiveConsole) ({ terminalFullScreen = false }) else null,
-            isImmersiveFullScreen = isImmersiveConsole,
-            onToggleImmersiveFullScreen = if (allowFullToggle) ({ terminalFullScreen = !terminalFullScreen }) else null,
+            onCloseFullScreen = { studioMode = "STUDIO" },
+            isImmersiveFullScreen = true,
         )
     }
 
@@ -5198,295 +5222,348 @@ private fun WorkspaceScreen(
             specialistBrainEnabled = state.mcJavaXmlSpecialistEnabled,
             onToggleSpecialistBrain = onSetMcJavaXmlSpecialist,
             onRunBlueprintPrompt = { promptText ->
-                if (studioMode != "SPLIT") studioMode = "STUDIO"
+                studioMode = "STUDIO"
                 onSend(promptText)
             },
             onOpenTerminalCommand = { cmd ->
-                if (studioMode == "SPLIT") splitRightPane = "CONSOLE" else studioMode = "CONSOLE"
+                studioMode = "CONSOLE"
                 onTerminalOpened()
                 onSendProjectPtyCommand(cmd)
             },
         )
     }
 
-    if (isImmersiveConsole) {
-        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF06080C))) {
-            renderConsolePane(true)
+    // ── 100% FULL-PAGE CLI TERMINAL ────────────────────────────────────────────
+    if (studioMode == "CONSOLE") {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF0C0C0E)),
+        ) {
+            renderConsolePane()
         }
         return
     }
 
-    val ideRailItems = listOf(
-        WidescreenRailItem("STUDIO", "Studio", WorkspaceTab.CHAT.icon),
-        WidescreenRailItem("SPLIT", "Split IDE", Icons.Default.DashboardCustomize, accent = true),
-        WidescreenRailItem("CONSOLE", "Console", WorkspaceTab.TERMINAL.icon, accent = true),
-        WidescreenRailItem("FILES", "Files", WorkspaceTab.FILES.icon),
-        WidescreenRailItem(
-            id = "DIFFS",
-            label = "Diffs",
-            icon = WorkspaceTab.CHANGES.icon,
-            badge = if (state.changes.isNotEmpty()) "+$totalWorkspaceAdditions" else null,
-        ),
-        WidescreenRailItem("MC_KIT", "MC Kit", Icons.Default.Bolt, accent = true),
-        WidescreenRailItem("WEB", "Preview", WorkspaceTab.PREVIEW.icon),
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF07090E)),
-    ) {
-        StudioWidescreenRail(
-            items = ideRailItems,
-            selectedId = studioMode,
-            onSelect = { id ->
-                studioMode = id
-                if (id == "FILES") onRefreshFiles()
-                if (id == "CONSOLE" || (id == "SPLIT" && splitRightPane == "CONSOLE")) onTerminalOpened()
-            },
-            isRunning = state.isRunning || state.projectTerminalRunning,
-            topSlot = {
-                Surface(
-                    onClick = onBack,
-                    modifier = Modifier.size(32.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF121722),
-                    border = BorderStroke(0.9.dp, Color(0xFF232C3D)),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.tab_projects),
-                            tint = Color(0xFFE2E8F0),
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-            },
-        )
-
+    // ── CLEAN FULL-PAGE SECONDARY PANES (FILES / DIFFS / MC KIT) ───────────────
+    if (studioMode != "STUDIO") {
+        val secondaryTitle = when (studioMode) {
+            "FILES" -> "Files · ${state.activeProject?.name ?: "workspace"}"
+            "DIFFS" -> "Diffs · +$totalWorkspaceAdditions / -$totalWorkspaceDeletions"
+            "MC_KIT" -> "MC Launcher Kit · Java · XML · KT"
+            else -> state.activeProject?.name ?: "Workspace"
+        }
         Column(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
+                .fillMaxSize()
+                .background(Color(0xFF0C0C0E))
                 .statusBarsPadding()
                 .navigationBarsPadding(),
         ) {
-            // ── Ultra-Slim 36dp Single-Row Horizontal Widescreen Telemetry Header ──
-            Surface(
-                color = Color(0xFF0A0E16),
-                modifier = Modifier.fillMaxWidth(),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(36.dp)
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                IconButton(
+                    onClick = { studioMode = "STUDIO" },
+                    modifier = Modifier.size(34.dp),
                 ) {
-                    VoxelPrismBrandMark(size = 20.dp, isRunning = state.isRunning)
-
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { showQuickEngineSheet = true },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = state.activeProject?.name.orEmpty(),
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 13.5.sp,
-                            color = Color(0xFFF8FAFC),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text("·", color = Color(0xFF64748B), fontWeight = FontWeight.Bold)
-                        Text(
-                            text = "$headerAgentLabel · $headerModelLabel",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isAntigravityActive) EngineEmerald else EngineCyan,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-
-                    // Active Java / XML / Kotlin + Minecraft Launcher Brain Pill!
-                    Surface(
-                        onClick = { studioMode = "MC_KIT" },
-                        shape = CircleShape,
-                        color = if (state.mcJavaXmlSpecialistEnabled) EngineEmerald.copy(alpha = 0.14f) else Color(0xFF141923),
-                        border = BorderStroke(
-                            0.8.dp,
-                            if (state.mcJavaXmlSpecialistEnabled) EngineEmerald.copy(alpha = 0.55f) else Color(0xFF253042),
-                        ),
-                    ) {
-                        Text(
-                            text = if (state.mcJavaXmlSpecialistEnabled) "⚡ Java·XML·KT + MC" else "Java·XML·KT Off",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (state.mcJavaXmlSpecialistEnabled) EngineEmerald else Color(0xFF94A3B8),
-                        )
-                    }
-
-                    if (state.changes.isNotEmpty()) {
-                        Surface(
-                            onClick = {
-                                if (studioMode == "SPLIT") splitRightPane = "DIFFS" else studioMode = "DIFFS"
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFF0E1814),
-                            border = BorderStroke(0.9.dp, EngineEmerald.copy(alpha = 0.45f)),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    "+$totalWorkspaceAdditions",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = EngineEmerald,
-                                )
-                                Text(
-                                    "-$totalWorkspaceDeletions",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFFFF7B72),
-                                )
-                            }
-                        }
-                    }
-
-                    Surface(
-                        onClick = {
-                            onRefreshGitStatus()
-                            showGitStudio = true
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF121824),
-                        border = BorderStroke(0.8.dp, Color(0xFF232E42)),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(12.dp), tint = EngineCyan)
-                            Text(
-                                text = if (state.gitStatus.modifiedFiles.isNotEmpty()) "Git (${state.gitStatus.modifiedFiles.size})" else "Push",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFE2E8F0),
-                            )
-                        }
-                    }
-
-                    if (isAndroidProject) {
-                        IconButton(
-                            onClick = { showAndroidBuild = true },
-                            enabled = !state.isRunning && !state.projectTerminalRunning,
-                            modifier = Modifier.size(28.dp),
-                        ) {
-                            if (state.androidBuildRunning) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp)
-                            else Icon(Icons.Default.PlayArrow, stringResource(R.string.ws_build_run_android), tint = EngineEmerald, modifier = Modifier.size(18.dp))
-                        }
-                    }
-
-                    IconButton(onClick = { showChats = true }, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.History, stringResource(R.string.ws_project_chats), tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
-                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Back to session",
+                        tint = Color(0xFFF4F4F6),
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
+                Text(
+                    text = secondaryTitle,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFF4F4F6),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
             }
-            HorizontalDivider(color = Color(0xFF182030), thickness = 0.6.dp)
-
-            // ── Animated Horizontal Widescreen Workspace Stage ──
-            StudioAnimatedPaneHost(
-                targetState = studioMode,
+            HorizontalDivider(color = Color(0xFF1D1D22), thickness = 0.6.dp)
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-            ) { mode ->
-                when (mode) {
-                    "STUDIO" -> renderChatPane()
-                    "SPLIT" -> {
-                        Row(modifier = Modifier.fillMaxSize()) {
-                            Box(modifier = Modifier.weight(0.51f).fillMaxHeight()) {
-                                renderChatPane()
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .width(1.dp)
-                                    .fillMaxHeight()
-                                    .background(Color(0xFF1A2233)),
-                            )
-                            Column(modifier = Modifier.weight(0.49f).fillMaxHeight()) {
-                                Surface(
-                                    color = Color(0xFF0B0F17),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(29.dp)
-                                            .padding(horizontal = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                                    ) {
-                                        listOf(
-                                            "CONSOLE" to ">_ Console",
-                                            "FILES" to "Files",
-                                            "DIFFS" to "Diffs",
-                                            "MC_KIT" to "⚡ MC Kit",
-                                        ).forEach { (paneKey, label) ->
-                                            val active = splitRightPane == paneKey
-                                            Surface(
-                                                onClick = {
-                                                    splitRightPane = paneKey
-                                                    if (paneKey == "FILES") onRefreshFiles()
-                                                    if (paneKey == "CONSOLE") onTerminalOpened()
-                                                },
-                                                shape = RoundedCornerShape(7.dp),
-                                                color = if (active) EngineEmerald.copy(alpha = 0.16f) else Color.Transparent,
-                                                border = if (active) BorderStroke(0.8.dp, EngineEmerald.copy(alpha = 0.55f)) else null,
-                                            ) {
-                                                Text(
-                                                    text = label,
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                                    fontSize = 10.sp,
-                                                    fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Medium,
-                                                    color = if (active) EngineEmerald else Color(0xFF94A3B8),
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                                HorizontalDivider(color = Color(0xFF182030), thickness = 0.6.dp)
-                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                                    when (splitRightPane) {
-                                        "FILES" -> renderFilesPane()
-                                        "DIFFS" -> renderDiffsPane()
-                                        "MC_KIT" -> renderMcKitPane()
-                                        else -> renderConsolePane(false)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "CONSOLE" -> renderConsolePane(true)
+            ) {
+                when (studioMode) {
                     "FILES" -> renderFilesPane()
                     "DIFFS" -> renderDiffsPane()
                     "MC_KIT" -> renderMcKitPane()
-                    "WEB" -> PreviewTab(state.previewReady, state.previewUrl)
-                    else -> renderChatPane()
                 }
             }
+        }
+        return
+    }
+
+    // ── 100% FULL-PAGE CLAUDE CODE SESSION (CHAT) ──────────────────────────────
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0C0C0E))
+            .statusBarsPadding(),
+    ) {
+        // Minimal 1:1 Claude Code Mobile Top Bar (< · New session / project · small Files · small CLI · ⋯)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .padding(horizontal = 6.dp),
+        ) {
+            // Left: Back arrow `<`
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .size(34.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = stringResource(R.string.tab_projects),
+                    tint = Color(0xFFF4F4F6),
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+
+            // Center: "New session" (when empty) or session/project title (tap to switch/create thread)
+            Row(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { showChats = true }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                if (state.isRunning) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFD97757)),
+                    )
+                }
+                Text(
+                    text = if (state.messages.isEmpty()) {
+                        "New session"
+                    } else {
+                        state.activeProject?.name ?: "Session"
+                    },
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFF4F4F6),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // Right: Small Files button + Small Full-Page CLI button + Small `⋯` circle menu (ZERO Preview button!)
+            Row(
+                modifier = Modifier.align(Alignment.CenterEnd),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                // Small Files button in clean top-right position
+                Surface(
+                    onClick = {
+                        studioMode = "FILES"
+                        onRefreshFiles()
+                    },
+                    shape = CircleShape,
+                    color = Color(0xFF17171C),
+                    border = BorderStroke(0.8.dp, Color(0xFF25252C)),
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = WorkspaceTab.FILES.icon,
+                            contentDescription = "Files",
+                            tint = Color(0xFFB4B4C0),
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+
+                // Small Full-Page CLI button
+                Surface(
+                    onClick = {
+                        studioMode = "CONSOLE"
+                        onTerminalOpened()
+                    },
+                    shape = CircleShape,
+                    color = Color(0xFF17171C),
+                    border = BorderStroke(
+                        0.8.dp,
+                        if (state.projectTerminalRunning) Color(0xFFD97757).copy(alpha = 0.6f) else Color(0xFF25252C),
+                    ),
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = WorkspaceTab.TERMINAL.icon,
+                            contentDescription = "Full-Page CLI",
+                            tint = if (state.projectTerminalRunning) Color(0xFFD97757) else Color(0xFFB4B4C0),
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
+
+                // Small `⋯` circle menu (1:1 matching Claude Code Mobile top-right button)
+                Box {
+                    Surface(
+                        onClick = { showSessionOverflowMenu = true },
+                        shape = CircleShape,
+                        color = Color(0xFF17171C),
+                        border = BorderStroke(0.8.dp, Color(0xFF25252C)),
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.MoreHoriz,
+                                contentDescription = "More options",
+                                tint = Color(0xFFE4E4E8),
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = showSessionOverflowMenu,
+                        onDismissRequest = { showSessionOverflowMenu = false },
+                        modifier = Modifier.background(Color(0xFF16161B)),
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (state.changes.isNotEmpty()) {
+                                        "Diffs (+$totalWorkspaceAdditions -$totalWorkspaceDeletions)"
+                                    } else {
+                                        "Code Diffs"
+                                    },
+                                    fontSize = 13.sp,
+                                    color = Color(0xFFF4F4F6),
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(WorkspaceTab.CHANGES.icon, null, tint = Color(0xFF34D399), modifier = Modifier.size(16.dp))
+                            },
+                            onClick = {
+                                showSessionOverflowMenu = false
+                                studioMode = "DIFFS"
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("New / Switch Chat", fontSize = 13.sp, color = Color(0xFFF4F4F6)) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Add, null, tint = Color(0xFFD97757), modifier = Modifier.size(16.dp))
+                            },
+                            onClick = {
+                                showSessionOverflowMenu = false
+                                showChats = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Switch Model / Engine", fontSize = 13.sp, color = Color(0xFFF4F4F6)) },
+                            leadingIcon = {
+                                Icon(Icons.Default.AutoAwesome, null, tint = Color(0xFFD97757), modifier = Modifier.size(16.dp))
+                            },
+                            onClick = {
+                                showSessionOverflowMenu = false
+                                showQuickEngineSheet = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("+ Custom Provider", fontSize = 13.sp, color = Color(0xFFF4F4F6)) },
+                            leadingIcon = {
+                                Icon(Icons.Default.Key, null, tint = Color(0xFFB4B4C0), modifier = Modifier.size(16.dp))
+                            },
+                            onClick = {
+                                showSessionOverflowMenu = false
+                                editingCustomProviderId = null
+                                showCustomProviderStudio = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (state.gitStatus.initialized) "Git (${state.gitStatus.branch})" else "Git & GitHub Push",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFFF4F4F6),
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.CloudUpload, null, tint = Color(0xFFB4B4C0), modifier = Modifier.size(16.dp))
+                            },
+                            onClick = {
+                                showSessionOverflowMenu = false
+                                onRefreshGitStatus()
+                                showGitStudio = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = if (state.mcJavaXmlSpecialistEnabled) "MC Kit · Java/XML/KT (ON)" else "MC Launcher Kit",
+                                    fontSize = 13.sp,
+                                    color = Color(0xFFF4F4F6),
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(Icons.Default.Bolt, null, tint = Color(0xFF34D399), modifier = Modifier.size(16.dp))
+                            },
+                            onClick = {
+                                showSessionOverflowMenu = false
+                                studioMode = "MC_KIT"
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("CLI Tools (claude / opencode)", fontSize = 13.sp, color = Color(0xFFF4F4F6)) },
+                            leadingIcon = {
+                                Icon(WorkspaceTab.TERMINAL.icon, null, tint = Color(0xFFB4B4C0), modifier = Modifier.size(16.dp))
+                            },
+                            onClick = {
+                                showSessionOverflowMenu = false
+                                showWorkspaceCliHub = true
+                            },
+                        )
+                        if (isAndroidProject) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = if (state.androidBuildRunning) "Building APK..." else "Build Android APK",
+                                        fontSize = 13.sp,
+                                        color = Color(0xFFF4F4F6),
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Default.PlayArrow, null, tint = Color(0xFF34D399), modifier = Modifier.size(16.dp))
+                                },
+                                onClick = {
+                                    showSessionOverflowMenu = false
+                                    showAndroidBuild = true
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 100% Full-Page Chat Area
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            renderChatPane()
         }
     }
 }
@@ -7206,12 +7283,6 @@ private fun ChatTab(
 
                 val canSend = prompt.isNotBlank() || pendingAttachments.isNotEmpty()
 
-                DetectedDevServerBanner(
-                    ports = detectedServerPorts,
-                    onOpenPort = onOpenServerPort,
-                    modifier = Modifier.padding(bottom = 6.dp),
-                )
-
                 SlashCommandPalette(
                     query = prompt,
                     onSelect = { slashCmd ->
@@ -7221,134 +7292,92 @@ private fun ChatTab(
                     modifier = Modifier.padding(bottom = 6.dp),
                 )
 
-                AntigravityMobileComposerStrip(
-                    isAntigravity = isAntigravity,
-                    activeAgentLabel = activeAgentLabel,
-                    activeModelLabel = activeModelLabel,
-                    antigravityEffort = antigravityEffort,
-                    gitBranch = gitBranch,
-                    totalAdditions = totalChatAdditions,
-                    totalDeletions = totalChatDeletions,
-                    changedFilesCount = changes.size,
-                    onOpenEngineSwitcher = onOpenEngineSwitcher,
-                    onSelectEffort = onSelectAntigravityEffort,
-                    onOpenCustomProvider = onOpenCustomProviderStudio,
-                    onOpenTermux = onOpenTerminalTab,
-                    onClickDiffBadge = onOpenChangesTab,
-                )
-
-                // Sleek Full-Screen Floating Capsule Composer (Pure Dark-Grey / Black!)
-                val composerAccent = if (isAntigravity) com.jarves.mh.ui.theme.EngineEmerald else MaterialTheme.colorScheme.primary
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(
-                        width = 1.dp,
-                        color = if (canSend || isRunning) composerAccent.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
+                // Subtle 1-line diff summary bar ONLY when files were changed
+                if (changes.isNotEmpty()) {
+                    Surface(
+                        onClick = onOpenChangesTab,
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF151519),
+                        border = BorderStroke(0.8.dp, Color(0xFF25252C)),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.Bottom,
+                            .padding(bottom = 8.dp),
                     ) {
-                        var attachMenuOpen by remember { mutableStateOf(false) }
-                        Box {
-                            IconButton(
-                                onClick = { attachMenuOpen = true },
-                                enabled = pendingAttachments.size < 5,
-                                modifier = Modifier.size(38.dp),
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.AttachFile,
-                                    contentDescription = stringResource(R.string.chat_attach_files),
-                                    modifier = Modifier.size(19.dp),
-                                    tint = if (pendingAttachments.isNotEmpty()) composerAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                Text(
+                                    text = "${changes.size} ${if (changes.size == 1) "file" else "files"} changed",
+                                    fontSize = 12.sp,
+                                    color = Color(0xFFE4E4E7),
+                                )
+                                Text(
+                                    text = "+$totalChatAdditions",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF4ADE80),
+                                )
+                                Text(
+                                    text = "-$totalChatDeletions",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFF87171),
                                 )
                             }
-                            DropdownMenu(expanded = attachMenuOpen, onDismissRequest = { attachMenuOpen = false }) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.chat_take_photo)) },
-                                    leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
-                                    onClick = { attachMenuOpen = false; onTakePhoto() },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.chat_choose_files)) },
-                                    leadingIcon = { Icon(Icons.Default.AttachFile, null) },
-                                    onClick = { attachMenuOpen = false; onAttach() },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Switch Engine / + Custom Provider") },
-                                    leadingIcon = { Icon(Icons.Default.AutoAwesome, null) },
-                                    onClick = { attachMenuOpen = false; onOpenEngineSwitcher() },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Install / Launch Any CLI") },
-                                    leadingIcon = { Icon(Icons.Default.Terminal, null) },
-                                    onClick = { attachMenuOpen = false; onOpenCliStore() },
-                                )
-                            }
+                            Text(
+                                text = "View diff",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFFD97757),
+                            )
                         }
+                    }
+                }
 
-                        Box {
-                            IconButton(
-                                onClick = { showPowerPopover = true },
-                                modifier = Modifier.size(36.dp),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Tune,
-                                    contentDescription = "Engine Power Controls",
-                                    modifier = Modifier.size(18.dp),
-                                    tint = if (fullAccessEnabled) EngineEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            DropdownMenu(expanded = showPowerPopover, onDismissRequest = { showPowerPopover = false }) {
-                                DropdownMenuItem(
-                                    text = { Text(if (fullAccessEnabled) "✓ Full Root Terminal & AI" else "Full Root Terminal & AI") },
-                                    onClick = { onToggleFullAccess(!fullAccessEnabled) },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(if (autoContextEnabled) "✓ Auto IDE Context ON" else "Auto IDE Context OFF") },
-                                    onClick = { onToggleAutoContext(!autoContextEnabled) },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(if (autoRunCommands) "✓ Auto-Run Bash ON" else "Auto-Run Bash OFF") },
-                                    onClick = { onToggleAutoRunCommands(!autoRunCommands) },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("+ Add Custom Provider") },
-                                    onClick = { showPowerPopover = false; onOpenCustomProviderStudio() },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Open Live PTY Terminal") },
-                                    onClick = { showPowerPopover = false; onOpenTerminalTab() },
-                                )
-                            }
-                        }
-
+                // 1:1 Pure-Dark Claude Code Mobile Composer Card ("Code anything...")
+                val sendTerracotta = Color(0xFFD97757)
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = Color(0xFF16161A),
+                    border = BorderStroke(1.dp, Color(0xFF26262E)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 10.dp, top = 12.dp, bottom = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         BasicTextField(
                             value = prompt,
                             onValueChange = { prompt = it },
                             modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 4.dp, vertical = 10.dp)
-                                .heightIn(min = 20.dp, max = 140.dp),
+                                .fillMaxWidth()
+                                .heightIn(min = 24.dp, max = 140.dp),
                             textStyle = TextStyle(
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 15.sp,
-                                lineHeight = 20.sp,
+                                color = Color(0xFFF4F4F6),
+                                fontSize = 15.5.sp,
+                                lineHeight = 21.sp,
                             ),
-                            cursorBrush = SolidColor(composerAccent),
+                            cursorBrush = SolidColor(sendTerracotta),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                             decorationBox = { innerTextField ->
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (prompt.isEmpty()) {
                                         Text(
-                                            text = if (isAntigravity) "Ask Antigravity anything or type /…" else "Ask $activeAgentLabel or type /…",
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 14.5.sp,
+                                            text = "Code anything...",
+                                            color = Color(0xFF787882),
+                                            fontSize = 15.5.sp,
                                         )
                                     }
                                     innerTextField()
@@ -7356,62 +7385,131 @@ private fun ChatTab(
                             },
                         )
 
-                        Spacer(Modifier.width(4.dp))
-
-                        StudioVoiceMicButton(
-                            compact = true,
-                            onTranscribed = { spoken ->
-                                prompt = if (prompt.isBlank()) spoken else "${prompt.trimEnd()} $spoken"
-                            },
-                        )
-
-                        Spacer(Modifier.width(5.dp))
-
-                        if (isRunning) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.error,
-                                        shape = CircleShape,
-                                    )
-                                    .clickable(onClick = onStop),
-                                contentAlignment = Alignment.Center,
+                        // Bottom Row of Card: [repo/model pill]   +   >_   🎤   (↑)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Surface(
+                                onClick = onOpenEngineSwitcher,
+                                shape = CircleShape,
+                                color = Color(0xFF202026),
+                                border = BorderStroke(0.8.dp, Color(0xFF2D2D36)),
+                                modifier = Modifier.widthIn(max = 185.dp),
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Stop,
-                                    contentDescription = stringResource(R.string.ws_stop_ai_task),
-                                    tint = MaterialTheme.colorScheme.onError,
-                                    modifier = Modifier.size(18.dp),
+                                Text(
+                                    text = "${projectName.lowercase().replace(' ', '-')}/${activeModelLabel.ifBlank { activeAgentLabel }}",
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFA1A1AA),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            if (canSend) Spacer(Modifier.width(6.dp))
-                        }
-                        if (!isRunning || canSend) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .background(
-                                        color = if (canSend) composerAccent else MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = CircleShape,
+
+                            Spacer(Modifier.weight(1f))
+
+                            var attachMenuOpen by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(
+                                    onClick = { attachMenuOpen = true },
+                                    enabled = pendingAttachments.size < 5,
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = stringResource(R.string.chat_attach_files),
+                                        modifier = Modifier.size(20.dp),
+                                        tint = if (pendingAttachments.isNotEmpty()) sendTerracotta else Color(0xFFA1A1AA),
                                     )
-                                    .clickable(
-                                        enabled = canSend,
-                                        onClick = {
-                                            if (canSend) {
-                                                onSend(prompt)
-                                                prompt = ""
-                                            }
-                                        },
-                                    ),
-                                contentAlignment = Alignment.Center,
+                                }
+                                DropdownMenu(expanded = attachMenuOpen, onDismissRequest = { attachMenuOpen = false }) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_choose_files)) },
+                                        leadingIcon = { Icon(Icons.Default.AttachFile, null) },
+                                        onClick = { attachMenuOpen = false; onAttach() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.chat_take_photo)) },
+                                        leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
+                                        onClick = { attachMenuOpen = false; onTakePhoto() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("+ Custom Provider") },
+                                        leadingIcon = { Icon(Icons.Default.AutoAwesome, null) },
+                                        onClick = { attachMenuOpen = false; onOpenCustomProviderStudio() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Install CLI Tools") },
+                                        leadingIcon = { Icon(Icons.Default.Terminal, null) },
+                                        onClick = { attachMenuOpen = false; onOpenCliStore() },
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = onOpenTerminalTab,
+                                modifier = Modifier.size(32.dp),
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.ArrowUpward,
-                                    contentDescription = stringResource(R.string.chat_send),
-                                    tint = if (canSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(19.dp),
+                                    imageVector = Icons.Default.Terminal,
+                                    contentDescription = "Open Full-Page CLI",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = Color(0xFFA1A1AA),
                                 )
+                            }
+
+                            StudioVoiceMicButton(
+                                compact = true,
+                                onTranscribed = { spoken ->
+                                    prompt = if (prompt.isBlank()) spoken else "${prompt.trimEnd()} $spoken"
+                                },
+                            )
+
+                            Spacer(Modifier.width(6.dp))
+
+                            if (isRunning) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(color = Color(0xFFDC2626), shape = CircleShape)
+                                        .clickable(onClick = onStop),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Stop,
+                                        contentDescription = stringResource(R.string.ws_stop_ai_task),
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(
+                                            color = if (canSend) sendTerracotta else Color(0xFF282830),
+                                            shape = CircleShape,
+                                        )
+                                        .clickable(
+                                            enabled = canSend,
+                                            onClick = {
+                                                if (canSend) {
+                                                    onSend(prompt)
+                                                    prompt = ""
+                                                }
+                                            },
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowUpward,
+                                        contentDescription = stringResource(R.string.chat_send),
+                                        tint = if (canSend) Color.White else Color(0xFF686872),
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
                             }
                         }
                     }

@@ -194,8 +194,8 @@ fun AntigravitySparkMark(
 }
 
 /**
- * Full-screen welcome hero inside ChatTab — renders a mobile-friendly Antigravity IDE Mission Control
- * layout when Antigravity is selected, strictly preserving the Dark-Grey / Pitch-Black color scheme!
+ * 1:1 Pure-Dark Claude Code Empty Session Canvas — centered Pixel "Claw'd" Mascot
+ * with subtle twinkling pixel stars in calm wide-open dark space.
  */
 @Composable
 fun FullScreenChatWelcomeHero(
@@ -212,236 +212,32 @@ fun FullScreenChatWelcomeHero(
     onQuickPrompt: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val accentPrimary = MaterialTheme.colorScheme.primary
-    val accentSecondary = EngineEmerald
-
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 6.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.Start,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(top = 92.dp, bottom = 36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        // Horizontal Widescreen Studio Hero Header (Compact vertical height + Voxel-Prism BrandMark!)
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            color = Color(0xFF0D1119),
-            border = BorderStroke(1.dp, Color(0xFF1D2636)),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                VoxelPrismBrandMark(size = 34.dp, isRunning = false)
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = if (isAntigravity) "ANTIGRAVITY WIDESCREEN STUDIO" else "CS PERSONAL ENGINE v5.0 · WIDESCREEN IDE",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.6.sp,
-                            color = EngineEmerald,
-                        )
-                        Surface(
-                            shape = CircleShape,
-                            color = EngineCyan.copy(alpha = 0.14f),
-                        ) {
-                            Text(
-                                text = "JAVA · XML · KOTLIN + MC BRAIN",
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.5.dp),
-                                fontSize = 8.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = EngineCyan,
-                            )
-                        }
-                    }
-                    Text(
-                        text = "Build or refactor in $projectName",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-
-        // Interactive Model & Effort & Custom Provider Controls
-        Row(
-            modifier = Modifier
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Surface(
-                modifier = Modifier.enginePressScale(onClick = onOpenEngineSwitcher),
-                shape = RoundedCornerShape(11.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (isAntigravity) AntigravitySparkMark(size = 13.dp)
-                    else Icon(Icons.Default.AutoAwesome, null, tint = accentPrimary, modifier = Modifier.size(14.dp))
-                    Text(
-                        text = "$activeAgentLabel · $activeModelLabel",
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                    )
-                    Icon(Icons.Default.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(15.dp))
-                }
-            }
-
-            if (isAntigravity) {
-                Surface(
-                    shape = RoundedCornerShape(11.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                ) {
-                    Row(modifier = Modifier.padding(3.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        listOf("low" to "Fast", "medium" to "Med", "high" to "High").forEach { (id, label) ->
-                            val selected = antigravityEffort == id
-                            Surface(
-                                modifier = Modifier.clickable { onSelectEffort(id) },
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
-                                border = if (selected) BorderStroke(1.dp, accentSecondary.copy(alpha = 0.55f)) else null,
-                            ) {
-                                Text(
-                                    text = label,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    fontSize = 10.5.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (selected) accentSecondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Surface(
-                modifier = Modifier.enginePressScale(onClick = onOpenCustomProviderStudio),
-                shape = RoundedCornerShape(11.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(Icons.Default.Add, null, tint = EngineCyan, modifier = Modifier.size(14.dp))
-                    Text(
-                        text = "Custom Provider",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
-
-            Surface(
-                modifier = Modifier.enginePressScale(onClick = onOpenCliStore),
-                shape = RoundedCornerShape(11.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    Icon(Icons.Default.Terminal, null, tint = EngineEmerald, modifier = Modifier.size(14.dp))
-                    Text(
-                        text = if (fullAccessEnabled) "Install Any CLI" else "CLI Hub",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            }
-        }
-
-        // 2x2 Horizontal Widescreen Quick Starter Action Cards (Minecraft Launcher + Java / XML / Kotlin Focused!)
-        val starters = listOf(
-            Triple(
-                "MC Launcher Home (Java + XML)",
-                "Horizontal widescreen ConstraintLayout XML + LauncherActivity.java + RAM slider & version picker",
-                MinecraftLauncherKnowledge.blueprints[0].prompt,
-            ),
-            Triple(
-                "Mojang Manifest + Asset Engine",
-                "Multi-threaded Java SHA-1 downloader for version_manifest_v2.json, libraries & resources",
-                MinecraftLauncherKnowledge.blueprints[1].prompt,
-            ),
-            Triple(
-                "ARM64 JRE + LWJGL3 Bridge",
-                "Java + C JNI libjli.so OpenJDK 8/17/21 launcher + SurfaceView & GL4ES/Zink renderer",
-                MinecraftLauncherKnowledge.blueprints[3].prompt,
-            ),
-            Triple(
-                "Fabric + Modrinth (Kotlin + XML)",
-                "1-tap Fabric Loader installer + horizontal RecyclerView Modrinth Mod/Shader browser",
-                MinecraftLauncherKnowledge.blueprints[4].prompt,
-            ),
+        ClawdPixelMascot(
+            size = 64.dp,
+            isRunning = false,
+            showSparkles = true,
         )
-
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            starters.chunked(2).forEach { pair ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    pair.forEach { (title, desc, promptText) ->
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .enginePressScale { onQuickPrompt(promptText) },
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(13.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text(
-                                    text = title,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = desc,
-                                    fontSize = 11.sp,
-                                    lineHeight = 15.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "~/workspace/${projectName.lowercase().replace(' ', '-')}",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.5.sp,
+            color = Color(0xFF686870),
+        )
     }
 }
 
 /**
- * Full-screen Chat Message renderer — replaces cramped bubbles with a spacious Antigravity / Cursor-grade
- * full-screen conversation layout where user prompts are sleek pills and AI responses stream directly
- * across the full chat canvas with copy & runnable bash support.
+ * Pure-Dark PC & Mobile Claude Code Transcript Renderer:
+ * - User prompts: subtle full-width dark bar (`❯ message`)
+ * - Assistant responses: terracotta `⏺` dot + clean borderless full-page text & dark code blocks!
  */
 @Composable
 fun FullScreenChatMessageItem(
@@ -454,119 +250,76 @@ fun FullScreenChatMessageItem(
 ) {
     val clipboard = LocalClipboardManager.current
     if (message.fromUser) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            shape = RoundedCornerShape(10.dp),
+            color = Color(0xFF19191E),
+            border = BorderStroke(0.7.dp, Color(0xFF26262E)),
         ) {
-            Surface(
-                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 5.dp, bottomStart = 18.dp, bottomEnd = 18.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                modifier = Modifier.widthIn(max = 338.dp),
+            Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    SelectionContainer {
+                    Text(
+                        text = "❯",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFD97757),
+                    )
+                    SelectionContainer(modifier = Modifier.weight(1f)) {
                         Text(
                             text = message.text,
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 14.5.sp,
                                 lineHeight = 21.sp,
                             ),
-                            color = MaterialTheme.colorScheme.onBackground,
+                            color = Color(0xFFF4F4F6),
                         )
                     }
-                    if (message.attachments.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            message.attachments.forEach { attachment ->
-                                FullScreenAttachmentPill(attachment = attachment, onClick = { onOpenAttachment(attachment) })
-                            }
+                }
+                if (message.attachments.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        message.attachments.forEach { attachment ->
+                            FullScreenAttachmentPill(attachment = attachment, onClick = { onOpenAttachment(attachment) })
                         }
                     }
                 }
             }
         }
     } else {
-        // Assistant Full-Width Response Canvas — pure Dark-Grey / Black surface with mobile IDE polish
-        val accentColor = if (isAntigravity) EngineEmerald else MaterialTheme.colorScheme.primary
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
+                .padding(vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
-                if (isAntigravity) {
-                    AntigravitySparkMark(isRunning = isStreamingNow, size = 17.dp)
-                } else {
-                    AnimatedEngineOrb(isRunning = isStreamingNow, size = 17.dp)
-                }
-                Text(
-                    text = agentDisplayName,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                Box(
+                    modifier = Modifier
+                        .padding(top = 7.dp)
+                        .size(7.dp)
+                        .background(
+                            if (isStreamingNow) Color(0xFFD97757) else Color(0xFFE4E4E7),
+                            CircleShape,
+                        ),
                 )
-                if (isStreamingNow) {
-                    Surface(
-                        shape = CircleShape,
-                        color = EngineEmerald.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, EngineEmerald.copy(alpha = 0.45f)),
-                    ) {
-                        Text(
-                            text = "STREAMING",
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = EngineEmerald,
-                        )
-                    }
-                } else if (message.workedMillis > 0L) {
-                    Text(
-                        text = "${(message.workedMillis / 1000L).coerceAtLeast(1L)}s",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                if (message.text.isNotBlank()) {
-                    IconButton(
-                        onClick = { clipboard.setText(AnnotatedString(message.text)) },
-                        modifier = Modifier.size(26.dp),
-                    ) {
-                        Icon(
-                            Icons.Default.ContentCopy,
-                            contentDescription = "Copy response",
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(
-                    1.dp,
-                    if (isStreamingNow) accentColor.copy(alpha = 0.45f)
-                    else MaterialTheme.colorScheme.outlineVariant,
-                ),
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
                     SelectionContainer {
                         MarkdownText(
                             markdown = message.text,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = Color(0xFFF4F4F6),
                             onRunCode = onRunInTerminal,
                         )
                     }
@@ -575,6 +328,36 @@ fun FullScreenChatMessageItem(
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             message.attachments.forEach { attachment ->
                                 FullScreenAttachmentPill(attachment = attachment, onClick = { onOpenAttachment(attachment) })
+                            }
+                        }
+                    }
+                    if (!isStreamingNow && message.text.isNotBlank()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (message.workedMillis > 0L) {
+                                Text(
+                                    text = "${(message.workedMillis / 1000L).coerceAtLeast(1L)}s",
+                                    fontSize = 10.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = Color(0xFF71717A),
+                                    modifier = Modifier.padding(end = 6.dp),
+                                )
+                            }
+                            IconButton(
+                                onClick = { clipboard.setText(AnnotatedString(message.text)) },
+                                modifier = Modifier.size(24.dp),
+                            ) {
+                                Icon(
+                                    Icons.Default.ContentCopy,
+                                    contentDescription = "Copy",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = Color(0xFF71717A),
+                                )
                             }
                         }
                     }
@@ -633,228 +416,224 @@ fun InlineAgentStepsCard(
 ) {
     var expanded by rememberSaveable { mutableStateOf(true) }
     val visibleItems = items.takeLast(24)
-    val completedCount = visibleItems.count { it.isComplete }
-    val accent = if (isAntigravity) EngineEmerald else EngineCyan
+    val terracotta = Color(0xFFD97757)
     val headerLabel = when {
-        isRunning && thinkingActive -> if (isAntigravity) "Antigravity Task Planner · ${elapsedSeconds}s" else "Reasoning & Planning · ${elapsedSeconds}s"
+        isRunning && thinkingActive -> "Thinking… (${elapsedSeconds}s)"
         isRunning -> {
             val latest = visibleItems.lastOrNull()
-            val cleanTitle = latest?.title?.removePrefix("Running ") ?: "Executing"
-            if (isAntigravity) "Task Progress ($completedCount/${visibleItems.size.coerceAtLeast(1)}) · $cleanTitle · ${elapsedSeconds}s"
-            else "$cleanTitle · ${elapsedSeconds}s"
+            val cleanTitle = latest?.title?.removePrefix("Running ") ?: "Working"
+            "$cleanTitle (${elapsedSeconds}s)"
         }
         else -> {
-            if (isAntigravity) "Task Completed · ${visibleItems.size} ${if (visibleItems.size == 1) "step" else "steps"} · ${elapsedSeconds.coerceAtLeast(1L)}s"
-            else "Completed ${visibleItems.size} agent ${if (visibleItems.size == 1) "step" else "steps"} · ${elapsedSeconds.coerceAtLeast(1L)}s"
+            "${visibleItems.size} ${if (visibleItems.size == 1) "action" else "actions"} (${elapsedSeconds.coerceAtLeast(1L)}s)"
         }
     }
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(15.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
-            1.dp,
-            if (isRunning) accent.copy(alpha = 0.45f) else MaterialTheme.colorScheme.outlineVariant,
-        ),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { expanded = !expanded }
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = if (isRunning) "✻" else "⏺",
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isRunning) terracotta else Color(0xFF4ADE80),
+            )
+            Text(
+                text = headerLabel,
+                modifier = Modifier.weight(1f),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (isRunning) terracotta else Color(0xFF8E8E95),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Icon(
+                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = Color(0xFF686870),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(start = 6.dp, top = 2.dp, bottom = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
-                if (isRunning) {
-                    if (isAntigravity) AntigravitySparkMark(isRunning = true, size = 15.dp)
-                    else CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 1.8.dp, color = accent)
-                } else {
-                    Icon(
-                        Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        modifier = Modifier.size(15.dp),
-                        tint = EngineEmerald,
-                    )
-                }
-                Text(
-                    text = headerLabel,
-                    modifier = Modifier.weight(1f),
-                    fontSize = 11.8.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isRunning) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Icon(
-                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    modifier = Modifier.size(17.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut(),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 11.dp, end = 11.dp, bottom = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    if (visibleItems.isEmpty() && thinkingActive) {
+                if (visibleItems.isEmpty() && thinkingActive) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
                         Text(
-                            text = "Analyzing workspace architecture & planning execution steps…",
+                            text = "Analyzing codebase…",
+                            fontFamily = FontFamily.Monospace,
                             fontSize = 11.5.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = Color(0xFF8E8E95),
                         )
                     }
-                    visibleItems.forEach { step ->
-                        val isBash = step.isCommand || step.title.contains("Bash", ignoreCase = true) || step.title.contains("command", ignoreCase = true)
-                        val isThink = step.title == "Think"
-                        val isCodeDiffStep = step.title.startsWith("Code Updated ·")
-                        when {
-                            isCodeDiffStep -> {
-                                // Compact per-file +Added / -Removed summary preserved right inside the step timeline!
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF0A0C10),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Column(modifier = Modifier.padding(9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(
-                                            text = step.title,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                        step.detail.split('\n').filter { it.isNotBlank() }.forEach { line ->
-                                            val match = Regex("^(.+?)\\s+\\+(\\d+)\\s+-(\\d+)$").find(line.trim())
-                                            if (match != null) {
-                                                val path = match.groupValues[1].trim()
-                                                val add = match.groupValues[2]
-                                                val del = match.groupValues[3]
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .then(if (onOpenFile != null) Modifier.clickable { onOpenFile(path) } else Modifier)
-                                                        .padding(vertical = 2.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                ) {
-                                                    FileExtIdeBadge(path = path)
-                                                    Text(
-                                                        text = path,
-                                                        modifier = Modifier.weight(1f),
-                                                        fontFamily = FontFamily.Monospace,
-                                                        fontSize = 11.sp,
-                                                        color = MaterialTheme.colorScheme.onSurface,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                    DiffCountPills(additions = add.toIntOrNull() ?: 0, deletions = del.toIntOrNull() ?: 0)
-                                                }
-                                            } else {
-                                                Text(
-                                                    text = line,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontSize = 10.5.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                        }
-                                    }
+                }
+                visibleItems.forEach { step ->
+                    val isBash = step.isCommand || step.title.contains("Bash", ignoreCase = true) || step.title.contains("command", ignoreCase = true)
+                    val isThink = step.title == "Think"
+                    val isCodeDiffStep = step.title.startsWith("Code Updated ·")
+                    when {
+                        isCodeDiffStep -> {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                    Text(
+                                        text = step.title,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFE4E4E7),
+                                    )
                                 }
-                            }
-                            isBash -> {
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF07090D),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Column(modifier = Modifier.padding(9.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.Terminal, null, tint = EngineEmerald, modifier = Modifier.size(13.dp))
-                                            Spacer(Modifier.width(6.dp))
+                                step.detail.split('\n').filter { it.isNotBlank() }.forEach { line ->
+                                    val match = Regex("^(.+?)\\s+\\+(\\d+)\\s+-(\\d+)$").find(line.trim())
+                                    if (match != null) {
+                                        val path = match.groupValues[1].trim()
+                                        val add = match.groupValues[2]
+                                        val del = match.groupValues[3]
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(start = 16.dp)
+                                                .then(if (onOpenFile != null) Modifier.clickable { onOpenFile(path) } else Modifier)
+                                                .padding(vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
                                             Text(
-                                                text = if (step.isComplete) "Bash · Exit OK" else "Running in Linux…",
-                                                fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = EngineEmerald,
+                                                text = path,
                                                 modifier = Modifier.weight(1f),
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 11.sp,
+                                                color = Color(0xFFD4D4D8),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                             )
-                                            val firstLineCmd = step.detail.lineSequence().firstOrNull()?.trim().orEmpty()
-                                            if (firstLineCmd.isNotBlank() && firstLineCmd.length < 140) {
-                                                Text(
-                                                    text = "Run in Termux ›",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = EngineCyan,
-                                                    modifier = Modifier.clickable { onRunInTerminal(firstLineCmd) },
-                                                )
-                                            }
+                                            DiffCountPills(additions = add.toIntOrNull() ?: 0, deletions = del.toIntOrNull() ?: 0)
                                         }
+                                    } else {
                                         Text(
-                                            text = step.detail.trim().takeLast(600),
+                                            text = line,
+                                            modifier = Modifier.padding(start = 16.dp),
                                             fontFamily = FontFamily.Monospace,
-                                            fontSize = 11.sp,
-                                            lineHeight = 15.sp,
-                                            color = Color(0xFFD6E2F0),
-                                            maxLines = 8,
-                                            overflow = TextOverflow.Ellipsis,
+                                            fontSize = 10.5.sp,
+                                            color = Color(0xFF8E8E95),
                                         )
                                     }
                                 }
                             }
-                            isThink -> {
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                                    modifier = Modifier.fillMaxWidth(),
+                        }
+                        isBash -> {
+                            val firstLineCmd = step.detail.lineSequence().firstOrNull()?.trim().orEmpty()
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    ) {
-                                        Icon(Icons.Default.Psychology, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+                                    Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                    Text(
+                                        text = "Bash(${firstLineCmd.ifBlank { "command" }.take(64)})",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFFE4E4E7),
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    if (firstLineCmd.isNotBlank() && firstLineCmd.length < 140) {
                                         Text(
-                                            text = step.detail.trim().ifBlank { "Thinking…" },
-                                            fontSize = 11.5.sp,
-                                            lineHeight = 16.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            text = ">_ CLI",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = terracotta,
+                                            modifier = Modifier.clickable { onRunInTerminal(firstLineCmd) },
+                                        )
+                                    }
+                                }
+                                if (step.detail.isNotBlank()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFF131317),
+                                        border = BorderStroke(0.7.dp, Color(0xFF23232A)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 16.dp),
+                                    ) {
+                                        Text(
+                                            text = step.detail.trim().takeLast(500),
+                                            modifier = Modifier.padding(8.dp),
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 10.8.sp,
+                                            lineHeight = 14.5.sp,
+                                            color = Color(0xFFA1A1AA),
                                             maxLines = 6,
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                     }
                                 }
                             }
-                            else -> {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                                ) {
-                                    Icon(
-                                        if (step.isComplete) Icons.Default.Check else Icons.Default.Code,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(12.dp),
-                                        tint = if (step.isComplete) EngineEmerald else MaterialTheme.colorScheme.primary,
-                                    )
-                                    Text(
-                                        text = "${step.title.removePrefix("Running ").removeSuffix(" completed")}: ${step.detail.replace('\n', ' ').trim()}",
-                                        fontSize = 11.2.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
+                        }
+                        isThink -> {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                Text(
+                                    text = step.detail.trim().ifBlank { "Thinking…" },
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 16.sp,
+                                    color = Color(0xFF787882),
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        else -> {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                Text(
+                                    text = "${step.title.removePrefix("Running ").removeSuffix(" completed")}: ${step.detail.replace('\n', ' ').trim()}",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.2.sp,
+                                    color = Color(0xFF9E9EA8),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                     }

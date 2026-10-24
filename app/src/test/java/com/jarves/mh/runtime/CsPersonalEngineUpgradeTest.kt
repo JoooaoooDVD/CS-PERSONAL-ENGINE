@@ -10,8 +10,12 @@ import com.jarves.mh.model.ProviderProtocol
 import com.jarves.mh.model.SavedCustomProvider
 import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.model.providersForAgent
+import androidx.compose.ui.graphics.toArgb
 import com.jarves.mh.ui.MinecraftLauncherKnowledge
 import com.jarves.mh.ui.computeLineDiffStats
+import com.jarves.mh.ui.theme.ClaudeDarkBg
+import com.jarves.mh.ui.theme.ClaudeDarkSurface
+import com.jarves.mh.ui.theme.ClaudeTerracotta
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.ServerSocket
@@ -362,5 +366,19 @@ class CsPersonalEngineUpgradeTest {
         assertTrue("LWJGL3" in brief)
         assertTrue("Minecraft Launcher Task" in brief)
         assertTrue(MinecraftLauncherKnowledge.blueprints.size >= 6)
+    }
+
+    @Test
+    fun pureDarkClaudeCodePaletteAndOsc11BackgroundMatchV6Spec() {
+        assertEquals(0xFF0C0C0E.toInt(), ClaudeDarkBg.toArgb())
+        assertEquals(0xFF151518.toInt(), ClaudeDarkSurface.toArgb())
+        assertEquals(0xFFD97757.toInt(), ClaudeTerracotta.toArgb())
+
+        val replies = mutableListOf<String>()
+        val emu = Vt100TerminalEmulator(initialRows = 24, initialCols = 80).apply {
+            onReplyToPty = { replies.add(it) }
+        }
+        emu.feedText("\u001B]11;?\u0007")
+        assertTrue(replies.any { it.contains("0c0c/0c0c/0e0e") })
     }
 }
