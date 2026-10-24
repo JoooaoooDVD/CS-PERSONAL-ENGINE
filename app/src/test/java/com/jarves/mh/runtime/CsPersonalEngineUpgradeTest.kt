@@ -403,13 +403,14 @@ class CsPersonalEngineUpgradeTest {
             }
 
             val checkpoints = WorkspaceCheckpoints(storeDir)
-            val snap = checkpoints.capture("proj-1", workspace)
-            assertFalse(snap.hashes.keys.any { it.startsWith(".pocketdev") || it.startsWith("node_modules") })
-            assertTrue("src/Main.kt" in snap.hashes.keys)
+            checkpoints.createCheckpoint("proj-1", workspace)
+            val snap = checkpoints.snapshot(workspace)
+            assertFalse(snap.keys.any { path -> path.startsWith(".pocketdev") || path.startsWith("node_modules") })
+            assertTrue("src/Main.kt" in snap.keys)
 
             File(workspace, "src/Main.kt").writeText("fun main() {\n    println(\"v7\")\n    println(\"fast\")\n}\n")
             File(workspace, "src/NewFeature.kt").writeText("class NewFeature\n")
-            val details = checkpoints.buildChangeDetails("proj-1", workspace)
+            val details = checkpoints.buildChangeDetails("proj-1", workspace, listOf("src/Main.kt", "src/NewFeature.kt"))
             assertEquals(2, details.size)
             val mainDiff = details.first { it.path == "src/Main.kt" }
             assertEquals(2, mainDiff.additions)
@@ -433,25 +434,30 @@ class CsPersonalEngineUpgradeTest {
                 description = "Custom agent",
                 installCommand = "npm i -g my-agent",
                 launchCommand = "my-agent",
+                checkBinary = "my-agent",
                 isCustom = true,
             )
             File(binDir, "my-agent").writeText("#!/bin/sh\necho ok\n")
 
-            val discovered = discoverInstalledCliIds(fakeRootfs, listOf(customCli))
+            val discovered = InstalledCliRuntimeBridge.discoverInstalledCliIds(fakeRootfs, listOf(customCli))
             assertTrue("opencode-cli" in discovered)
             assertTrue("openai-codex" in discovered)
             assertTrue("custom-my-agent" in discovered)
             assertFalse("aider-cli" in discovered)
 
-            val openCodeCmd = InstalledCliRuntimeBridge.buildNonInteractiveCommand(
+            val openCodeScript = InstalledCliRuntimeBridge.buildCliExecutionScript(
                 BUILTIN_CLI_PACKAGES.first { it.id == "opencode-cli" },
+                "/tmp/p.txt",
+                "/workspace",
             )
-            assertTrue("opencode run" in openCodeCmd)
+            assertTrue("opencode run" in openCodeScript)
 
-            val codexCmd = InstalledCliRuntimeBridge.buildNonInteractiveCommand(
+            val codexScript = InstalledCliRuntimeBridge.buildCliExecutionScript(
                 BUILTIN_CLI_PACKAGES.first { it.id == "openai-codex" },
+                "/tmp/p.txt",
+                "/workspace",
             )
-            assertTrue("codex exec" in codexCmd)
+            assertTrue("codex exec" in codexScript)
         } finally {
             fakeRootfs.deleteRecursively()
         }
