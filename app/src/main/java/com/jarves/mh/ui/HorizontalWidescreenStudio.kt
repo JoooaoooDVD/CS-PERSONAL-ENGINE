@@ -38,10 +38,13 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -100,22 +103,50 @@ fun ClawdPixelMascot(
     val infinite = rememberInfiniteTransition(label = "clawd_anim")
     val bobOffset by infinite.animateFloat(
         initialValue = 0f,
-        targetValue = if (isRunning) -4f else -1.5f,
+        targetValue = if (isRunning) -5f else -2.5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isRunning) 420 else 1800, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = if (isRunning) 380 else 1900, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "clawd_bob",
     )
-    val starAlpha by infinite.animateFloat(
-        initialValue = 0.22f,
-        targetValue = 0.68f,
+    val starAlphaA by infinite.animateFloat(
+        initialValue = 0.20f,
+        targetValue = 0.85f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1600, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse,
         ),
-        label = "clawd_star",
+        label = "clawd_star_a",
     )
+    val starAlphaB by infinite.animateFloat(
+        initialValue = 0.80f,
+        targetValue = 0.18f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "clawd_star_b",
+    )
+    val walkPhase by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 320),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "clawd_walk",
+    )
+
+    var blinking by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(3300)
+            blinking = true
+            delay(135)
+            blinking = false
+        }
+    }
 
     val boxDp = if (showSparkles) size * 2.2f else size
     Canvas(modifier = modifier.size(boxDp)) {
@@ -123,20 +154,18 @@ fun ClawdPixelMascot(
         val totalH = this.size.height
 
         if (showSparkles) {
-            // Subtle pixel stars around Claw'd just like the official Claude Code mobile empty screen
-            val starColor = ClaudeTerracotta.copy(alpha = starAlpha)
             val s = (totalW * 0.018f).coerceAtLeast(2f)
-            fun drawPixelStar(cx: Float, cy: Float) {
+            fun drawPixelStar(cx: Float, cy: Float, alpha: Float) {
+                val starColor = ClaudeTerracotta.copy(alpha = alpha)
                 drawRect(starColor, Offset(cx - s * 1.5f, cy - s * 0.5f), Size(s * 3f, s))
                 drawRect(starColor, Offset(cx - s * 0.5f, cy - s * 1.5f), Size(s, s * 3f))
             }
-            drawPixelStar(totalW * 0.72f, totalH * 0.14f)
-            drawPixelStar(totalW * 0.14f, totalH * 0.42f)
-            drawPixelStar(totalW * 0.78f, totalH * 0.84f)
+            drawPixelStar(totalW * 0.72f, totalH * 0.14f, starAlphaA)
+            drawPixelStar(totalW * 0.14f, totalH * 0.42f, starAlphaB)
+            drawPixelStar(totalW * 0.78f, totalH * 0.84f, (starAlphaA + starAlphaB) * 0.5f)
         }
 
         val spriteW = if (showSparkles) totalW * 0.44f else totalW * 0.88f
-        // 13x10 pixel grid for exact Claw'd proportions
         val px = spriteW / 13f
         val spriteH = px * 10f
         val ox = (totalW - spriteW) * 0.5f
@@ -145,7 +174,7 @@ fun ClawdPixelMascot(
         val bodyColor = ClaudeTerracotta
         val eyeColor = Color(0xFF0C0C0E)
 
-        fun block(gx: Int, gy: Int, gw: Int, gh: Int, color: Color) {
+        fun block(gx: Int, gy: Float, gw: Int, gh: Float, color: Color) {
             drawRect(
                 color = color,
                 topLeft = Offset(ox + gx * px, oy + gy * px),
@@ -153,19 +182,27 @@ fun ClawdPixelMascot(
             )
         }
 
-        // Main rectangular head/body: cols 2..10 (9 wide), rows 1..6 (6 tall)
-        block(2, 1, 9, 6, bodyColor)
-        // Left & right side pixel arms: col 1 & col 11, rows 3..4 (2 tall)
-        block(1, 3, 1, 2, bodyColor)
-        block(11, 3, 1, 2, bodyColor)
-        // 4 pixel legs: cols 3, 5, 7, 9, rows 7..8 (2 tall)
-        block(3, 7, 1, 2, bodyColor)
-        block(5, 7, 1, 2, bodyColor)
-        block(7, 7, 1, 2, bodyColor)
-        block(9, 7, 1, 2, bodyColor)
-        // Two dark square pixel eyes: col 3 & col 9, row 3
-        block(3, 3, 1, 2, eyeColor)
-        block(9, 3, 1, 2, eyeColor)
+        // Main rectangular head/body
+        block(2, 1f, 9, 6f, bodyColor)
+        // Side pixel arms (gently wave when running)
+        val armLift = if (isRunning && walkPhase > 0.5f) -0.45f else 0f
+        block(1, 3f + armLift, 1, 2f, bodyColor)
+        block(11, 3f - armLift, 1, 2f, bodyColor)
+        // 4 pixel legs (alternate walk cycle when running!)
+        val legStepA = if (isRunning && walkPhase > 0.5f) 1.4f else 2f
+        val legStepB = if (isRunning && walkPhase <= 0.5f) 1.4f else 2f
+        block(3, 7f, 1, legStepA, bodyColor)
+        block(5, 7f, 1, legStepB, bodyColor)
+        block(7, 7f, 1, legStepA, bodyColor)
+        block(9, 7f, 1, legStepB, bodyColor)
+        // Pixel eyes (natural periodic blink!)
+        if (blinking) {
+            block(3, 3.8f, 1, 0.5f, eyeColor)
+            block(9, 3.8f, 1, 0.5f, eyeColor)
+        } else {
+            block(3, 3f, 1, 2f, eyeColor)
+            block(9, 3f, 1, 2f, eyeColor)
+        }
     }
 }
 
@@ -254,8 +291,20 @@ fun ClaudeCodeMobileHomeScreen(
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
+                        IconButton(
+                            onClick = onImportZipClick,
+                            enabled = !state.projectImporting && !state.gitCloneRunning,
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FolderZip,
+                                contentDescription = "Import ZIP workspace",
+                                tint = ClaudeTextSecondary,
+                                modifier = Modifier.size(19.dp),
+                            )
+                        }
                         IconButton(
                             onClick = onOpenFullPageCli,
                             modifier = Modifier.size(36.dp),
@@ -292,7 +341,13 @@ fun ClaudeCodeMobileHomeScreen(
                     color = ClaudeTextPrimary,
                 )
 
-                Spacer(Modifier.height(22.dp))
+                Spacer(Modifier.height(18.dp))
+
+                ClaudeLiveImportProgressCard(
+                    visible = state.projectImporting || state.gitCloneRunning,
+                    title = if (state.projectImporting) "Importing Workspace Archive…" else "Cloning Git Repository…",
+                    detail = state.projectImportMessage ?: state.gitCloneMessage ?: "Extracting project files safely…",
+                )
             }
 
             if (projects.isEmpty()) {
@@ -447,27 +502,13 @@ fun ClaudeCodeMobileHomeScreen(
                     showMenuSheet = false
                     onOpenCliHub()
                 }
-                MinimalDrawerActionRow(Icons.Default.FolderOpen, "Import ZIP or Clone Git", "Open existing Android / Java / Kotlin repo") {
+                MinimalDrawerActionRow(Icons.Default.FolderZip, "Import .zip Workspace", "Extract project with live file progress") {
+                    showMenuSheet = false
+                    onImportZipClick()
+                }
+                MinimalDrawerActionRow(Icons.Default.FolderOpen, "Clone Git Repository", "Clone any GitHub / HTTPS repository") {
                     showMenuSheet = false
                     showCloneDialog = true
-                }
-
-                // Quiet toggle for Minecraft Launcher Java/XML/Kotlin brain
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Java · XML · Kotlin + MC Brain", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = ClaudeTextPrimary)
-                        Text("Auto-send Minecraft Launcher & Android XML context", fontSize = 11.5.sp, color = ClaudeTextSecondary)
-                    }
-                    Switch(
-                        checked = state.mcJavaXmlSpecialistEnabled,
-                        onCheckedChange = onToggleMcSpecialist,
-                    )
                 }
 
                 HorizontalDivider(color = ClaudeDarkBorder)
@@ -490,14 +531,14 @@ fun ClaudeCodeMobileHomeScreen(
                     value = newProjectName,
                     onValueChange = { newProjectName = it },
                     singleLine = true,
-                    placeholder = { Text("mc-launcher") },
+                    placeholder = { Text("my-app") },
                     modifier = Modifier.fillMaxWidth(),
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        val trimmed = newProjectName.trim().ifBlank { "mc-launcher" }
+                        val trimmed = newProjectName.trim().ifBlank { "my-app" }
                         newProjectName = ""
                         showNewDialog = false
                         onCreateNamedProject(trimmed)

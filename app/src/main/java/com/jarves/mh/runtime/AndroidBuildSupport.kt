@@ -94,12 +94,17 @@ internal fun androidGradleCommand(root: File, task: String): String {
 
 internal fun findAndroidProjectRoot(workspace: File): File? {
     val settingsNames = setOf("settings.gradle", "settings.gradle.kts", "settings.gradle.dcl")
-    return workspace.walkTopDown().maxDepth(4)
+    val skipDirs = setOf(".git", ".gradle", "node_modules", "build", ".pocketdev", ".claude", ".venv", "venv", "dist", "target")
+    return workspace.walkTopDown()
+        .onEnter { dir -> dir == workspace || dir.name !in skipDirs }
+        .maxDepth(4)
         .filter { it.isFile && it.name in settingsNames }
         .mapNotNull(File::getParentFile)
         .sortedBy { it.absolutePath.length }
         .firstOrNull { root ->
-            root.walkTopDown().maxDepth(5)
+            root.walkTopDown()
+                .onEnter { dir -> dir == root || dir.name !in skipDirs }
+                .maxDepth(5)
                 .any { it.isFile && it.invariantSeparatorsPath.endsWith("src/main/AndroidManifest.xml") }
         }
 }

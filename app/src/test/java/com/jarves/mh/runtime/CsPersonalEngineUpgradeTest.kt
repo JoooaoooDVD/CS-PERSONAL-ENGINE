@@ -2,6 +2,8 @@ package com.jarves.mh.runtime
 
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.BUILTIN_CLI_PACKAGES
+import com.jarves.mh.model.ChatMessage
+import com.jarves.mh.model.CliToolPackage
 import com.jarves.mh.model.ENGINE_SLASH_COMMANDS
 import com.jarves.mh.model.OPENAI_COMPATIBLE_PRESETS
 import com.jarves.mh.model.ProviderKind
@@ -12,15 +14,18 @@ import com.jarves.mh.model.providerProtocolForAgent
 import com.jarves.mh.model.providersForAgent
 import androidx.compose.ui.graphics.toArgb
 import com.jarves.mh.ui.MinecraftLauncherKnowledge
+import com.jarves.mh.ui.computeClaudeSessionBenchmark
 import com.jarves.mh.ui.computeLineDiffStats
 import com.jarves.mh.ui.theme.ClaudeDarkBg
 import com.jarves.mh.ui.theme.ClaudeDarkSurface
 import com.jarves.mh.ui.theme.ClaudeTerracotta
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import kotlin.concurrent.thread
 import org.json.JSONArray
 import org.json.JSONObject
@@ -380,5 +385,99 @@ class CsPersonalEngineUpgradeTest {
         }
         emu.feedText("\u001B]11;?\u0007")
         assertTrue(replies.any { it.contains("0c0c/0c0c/0e0e") })
+    }
+
+    @Test
+    fun v7WorkspaceCheckpointsExcludesPocketDevAndHandlesMultiFileDiffsSafely() {
+        val tempRoot = Files.createTempDirectory("cs-engine-v7-ckpt").toFile()
+        try {
+            val workspace = File(tempRoot, "project").apply { mkdirs() }
+            val storeDir = File(tempRoot, "store").apply { mkdirs() }
+            File(workspace, ".pocketdev/imports").apply { mkdirs() }
+            File(workspace, ".pocketdev/imports/huge.zip").writeBytes(ByteArray(4096) { 0x50 })
+            File(workspace, "node_modules/pkg").apply { mkdirs() }
+            File(workspace, "node_modules/pkg/index.js").writeText("module.exports = 1;")
+            File(workspace, "src/Main.kt").apply {
+                parentFile?.mkdirs()
+                writeText("fun main() {\n    println(\"v6\")\n}\n")
+            }
+
+            val checkpoints = WorkspaceCheckpoints(storeDir)
+            val snap = checkpoints.capture("proj-1", workspace)
+            assertFalse(snap.hashes.keys.any { it.startsWith(".pocketdev") || it.startsWith("node_modules") })
+            assertTrue("src/Main.kt" in snap.hashes.keys)
+
+            File(workspace, "src/Main.kt").writeText("fun main() {\n    println(\"v7\")\n    println(\"fast\")\n}\n")
+            File(workspace, "src/NewFeature.kt").writeText("class NewFeature\n")
+            val details = checkpoints.buildChangeDetails("proj-1", workspace)
+            assertEquals(2, details.size)
+            val mainDiff = details.first { it.path == "src/Main.kt" }
+            assertEquals(2, mainDiff.additions)
+            assertEquals(1, mainDiff.deletions)
+        } finally {
+            tempRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun v7InstalledCliDiscoveryAndCommandBuilderSupportAllInstalledClis() {
+        val fakeRootfs = Files.createTempDirectory("cs-engine-v7-rootfs").toFile()
+        try {
+            val binDir = File(fakeRootfs, "usr/local/bin").apply { mkdirs() }
+            File(binDir, "opencode").writeText("#!/bin/sh\necho ok\n")
+            File(binDir, "codex").writeText("#!/bin/sh\necho ok\n")
+            val customCli = CliToolPackage(
+                id = "custom-my-agent",
+                name = "My Custom Agent",
+                category = "Custom CLI",
+                description = "Custom agent",
+                installCommand = "npm i -g my-agent",
+                launchCommand = "my-agent",
+                isCustom = true,
+            )
+            File(binDir, "my-agent").writeText("#!/bin/sh\necho ok\n")
+
+            val discovered = discoverInstalledCliIds(fakeRootfs, listOf(customCli))
+            assertTrue("opencode-cli" in discovered)
+            assertTrue("openai-codex" in discovered)
+            assertTrue("custom-my-agent" in discovered)
+            assertFalse("aider-cli" in discovered)
+
+            val openCodeCmd = InstalledCliRuntimeBridge.buildNonInteractiveCommand(
+                BUILTIN_CLI_PACKAGES.first { it.id == "opencode-cli" },
+            )
+            assertTrue("opencode run" in openCodeCmd)
+
+            val codexCmd = InstalledCliRuntimeBridge.buildNonInteractiveCommand(
+                BUILTIN_CLI_PACKAGES.first { it.id == "openai-codex" },
+            )
+            assertTrue("codex exec" in codexCmd)
+        } finally {
+            fakeRootfs.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun v7ClaudeContextBenchmarkAndCompactSlashCommandWorkAccurately() {
+        assertTrue(ENGINE_SLASH_COMMANDS.any { it.command == "/compact" })
+
+        val msgs = listOf(
+            ChatMessage(fromUser = true, text = "a".repeat(8_000)),
+            ChatMessage(fromUser = false, text = "b".repeat(12_000), workedMillis = 2_500L),
+        )
+        val stats = computeClaudeSessionBenchmark(
+            messages = msgs,
+            streamingPreview = null,
+            pendingAttachments = emptyList(),
+            activeModelLabel = "claude-sonnet-4-6",
+            taskStartedAtMillis = 1_000L,
+            taskFinishedAtMillis = 3_500L,
+            isRunning = false,
+        )
+        assertEquals(200_000, stats.maxContextTokens)
+        assertEquals(2_000, stats.promptTokens)
+        assertEquals(3_000, stats.responseTokens)
+        assertTrue(stats.usedPercent > 2.5f && stats.usedPercent < 5.0f)
+        assertTrue(stats.tokensPerSecond > 500f)
     }
 }

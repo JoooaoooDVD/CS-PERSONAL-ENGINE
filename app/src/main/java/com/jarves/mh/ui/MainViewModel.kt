@@ -281,7 +281,7 @@ private data class TranscriptWrite(
 
 private data class ImportedZipProject(
     val project: Project,
-    val sourceAttachment: ChatAttachment,
+    val summaryText: String,
 )
 
 data class AppUiState(
@@ -425,10 +425,12 @@ data class AppUiState(
     val activeToolHeadline: String? = null,
     val fullAccessTerminalEnabled: Boolean = true,
     val interactivePtyMode: Boolean = true,
-    val mcJavaXmlSpecialistEnabled: Boolean = true,
+    val mcJavaXmlSpecialistEnabled: Boolean = false,
     val savedCustomProviders: List<SavedCustomProvider> = emptyList(),
     val activeCustomProviderId: String = "",
     val savedCustomClis: List<CliToolPackage> = emptyList(),
+    val activeCliChatId: String = "",
+    val installedCliIds: Set<String> = emptySet(),
     val ptyTerminalBuffer: String = "",
     val ptySnapshot: TerminalScreenSnapshot? = null,
     val ptyTerminalAlive: Boolean = false,
@@ -481,8 +483,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.value.activeChatId?.let { preferences.saveAgentConversation(AgentKind.ANTIGRAVITY, projectId, it, id) }
         },
     )
+    private val installedCliRuntime = com.jarves.mh.runtime.InstalledCliRuntimeBridge(
+        context = application,
+        activeCliLookup = {
+            val id = _state.value.activeCliChatId
+            (_state.value.savedCustomClis + BUILTIN_CLI_PACKAGES).firstOrNull { it.id == id }
+        },
+        secretFor = { profile -> resolveProviderSecret(profile) },
+    )
     private val agentRegistry = AgentRegistry.builtIns(claudeRuntime, dshRuntime, antigravityRuntime)
-    private fun activeRuntime(): com.jarves.mh.runtime.RuntimeBridge = agentRegistry.require(_state.value.agentKind).runtime
+    private fun activeRuntime(): com.jarves.mh.runtime.RuntimeBridge {
+        if (_state.value.activeCliChatId.isNotBlank()) return installedCliRuntime
+        return agentRegistry.require(_state.value.agentKind).runtime
+    }
     private val providerApi = ProviderApiClient(application)
     private fun appUpdater(): AppUpdater = AppUpdater(
         getApplication(),
@@ -570,6 +583,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             savedCustomProviders = preferences.loadSavedCustomProviders(),
             activeCustomProviderId = preferences.activeCustomProviderId,
             savedCustomClis = preferences.loadSavedCustomClis(),
+            activeCliChatId = preferences.activeCliChatId,
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
             }.toSet() + DevStack.WEB,
@@ -640,6 +654,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch { dshRuntime.events.collect(::onRuntimeEvent) }
         viewModelScope.launch { antigravityRuntime.events.collect(::onRuntimeEvent) }
+        viewModelScope.launch { installedCliRuntime.events.collect(::onRuntimeEvent) }
+        refreshInstalledClis()
         viewModelScope.launch {
             antigravityAuthController.state.collect { auth ->
                 _state.update { it.copy(antigravityAuth = auth) }
@@ -2173,11 +2189,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Keeps both agent bridges mapped to the same workspace root; the active one is used. */
+    /** Keeps all agent bridges mapped to the same workspace root; the active one is used. */
     private fun configureBridgeRoots(projectId: String, rootPath: String) {
         claudeRuntime.configureProjectRoot(projectId, rootPath)
         dshRuntime.configureProjectRoot(projectId, rootPath)
         antigravityRuntime.configureProjectRoot(projectId, rootPath)
+        installedCliRuntime.configureProjectRoot(projectId, rootPath)
     }
 
     init {
@@ -2540,19 +2557,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Called from the first-launch setup screen; persists the agent choice for setup and Settings. */
     fun selectAgent(kind: AgentKind) {
-        if (_state.value.agentKind == kind) return
+        if (_state.value.agentKind == kind && _state.value.activeCliChatId.isEmpty()) return
         if (_state.value.isRunning) {
             _state.update { it.copy(toastMessage = str(R.string.vm_stop_agent_before_switching)) }
             return
         }
         val selectingInitialAgent = !preferences.runtimeSetupComplete
         preferences.agentKind = kind.stableId
+        preferences.activeCliChatId = ""
         if (selectingInitialAgent) preferences.primaryAgentKind = kind.stableId
         _state.update { current ->
             preferences.saveProvider(current.provider, current.agentKind)
             val provider = preferences.loadProvider(vault, kind)
             current.copy(
                 agentKind = kind,
+                activeCliChatId = "",
                 primaryAgentKind = if (selectingInitialAgent) kind else current.primaryAgentKind,
                 provider = provider,
                 activeApiKeyName = vault.list(provider.kind.name).firstOrNull(ApiKeyInfo::isActive)?.name,
@@ -3137,7 +3156,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         configureBridgeRoots(project.id, project.rootPath)
         val terminal = loadProjectTerminal(project)
-        val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
         val chats = preferences.loadProjectChats(project.id).ifEmpty {
             listOf(ProjectChat(title = str(R.string.vm_main_chat))).also { preferences.saveProjectChats(project.id, it) }
         }
@@ -3171,7 +3189,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 projectTerminalCommand = null,
                 projectTerminalDraft = null,
                 pendingTerminalCommand = null,
-                suggestedProjectRoot = suggestedRoot,
+                suggestedProjectRoot = null,
                 previewReady = false,
                 previewUrl = null,
                 pendingAttachments = emptyList(),
@@ -3190,6 +3208,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         refreshProjectFiles()
+        refreshInstalledClis()
         viewModelScope.launch {
             val pending = activeRuntime().loadPendingChanges(project.id)
             if (_state.value.activeProject?.id == project.id) _state.update { it.copy(changes = pending) }
@@ -3213,24 +3232,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        if (active != null) {
-            val chats = preferences.loadProjectChats(active.id)
-            val userMessages = chats.sumOf { preferences.loadMessages(active.id, it.id).count { m -> m.fromUser } }
-            val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/${active.id}")
-            val userFiles = if (workspaceDir.isDirectory) {
-                workspaceDir.walkTopDown().filter { file ->
-                    file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
-                }.count()
-            } else 0
-
-            if (userMessages == 0 && userFiles == 0 && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
-                // Unused empty project; delete immediately so it does not clutter the project list.
-                _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == active.id }) }
-                preferences.saveProjects(_state.value.projects)
-                viewModelScope.launch(Dispatchers.IO) {
-                    workspaceDir.deleteRecursively()
-                    terminalHistoryFile(active.id).delete()
-                    preferences.deleteProjectChats(active.id)
+        if (active != null && !_state.value.isRunning && !_state.value.projectTerminalRunning) {
+            val activeId = active.id
+            viewModelScope.launch(Dispatchers.IO) {
+                val chats = preferences.loadProjectChats(activeId)
+                val userMessages = chats.sumOf { preferences.loadMessages(activeId, it.id).count { m -> m.fromUser } }
+                if (userMessages == 0) {
+                    val workspaceDir = File(getApplication<Application>().filesDir, "workspaces/$activeId")
+                    val hasUserFile = workspaceDir.isDirectory && workspaceDir.walkTopDown()
+                        .maxDepth(4)
+                        .any { file ->
+                            file.isFile && !file.name.startsWith(".claude") && file.name != ".pocket-dev-stacks.json"
+                        }
+                    if (!hasUserFile) {
+                        _state.update { current -> current.copy(projects = current.projects.filterNot { it.id == activeId }) }
+                        preferences.saveProjects(_state.value.projects)
+                        workspaceDir.deleteRecursively()
+                        terminalHistoryFile(activeId).delete()
+                        preferences.deleteProjectChats(activeId)
+                    }
                 }
             }
         }
@@ -3411,8 +3431,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = withContext(Dispatchers.IO) { runCatching { extractImportedProject(uri) } }
             result.onSuccess { imported ->
                 val project = imported.project
-                val firstChat = ProjectChat(title = str(R.string.vm_new_chat))
+                val firstChat = ProjectChat(title = project.name)
                 preferences.saveProjectChats(project.id, listOf(firstChat))
+                preferences.saveMessages(
+                    project.id,
+                    firstChat.id,
+                    listOf(ChatMessage(fromUser = false, text = imported.summaryText)),
+                )
                 _state.update { current ->
                     current.copy(
                         projects = listOf(project) + current.projects,
@@ -3423,7 +3448,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 preferences.saveProjects(_state.value.projects)
                 openProject(project)
-                _state.update { it.copy(pendingAttachments = listOf(imported.sourceAttachment)) }
             }.onFailure { error ->
                 _state.update {
                     it.copy(
@@ -3447,6 +3471,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        val cleanArchiveTitle = archiveName.removeSuffix(".zip").removeSuffix(".ZIP").trim().take(48)
         val identity = generateQuickChatIdentity(_state.value.projects.mapTo(mutableSetOf()) { it.slug })
         val projectId = UUID.randomUUID().toString()
         val destination = File(app.filesDir, "workspaces/$projectId")
@@ -3454,19 +3479,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val destinationPath = destination.canonicalFile.toPath()
         val availableLimit = (destination.usableSpace * 8L / 10L).coerceAtMost(MAX_IMPORTED_PROJECT_BYTES)
         var extractedBytes = 0L
+        var extractedFiles = 0
+        var skippedGeneratedEntries = 0
         var entries = 0
+        val sampleRelativeFiles = ArrayList<String>(24)
+        var lastProgressEmitAt = 0L
+        val skippedSegments = setOf(
+            "node_modules", ".gradle", ".cxx", "__pycache__", ".pytest_cache", ".mypy_cache",
+            ".parcel-cache", ".turbo", ".svelte-kit",
+        )
         try {
             val source = resolver.openInputStream(uri) ?: error(str(R.string.vm_zip_open_failed))
-            source.buffered().use { input ->
+            source.buffered(64 * 1024).use { input ->
                 ZipInputStream(input).use { zip ->
+                    val buffer = ByteArray(32 * 1024)
                     while (true) {
-                        val entry = zip.nextEntry ?: break
+                        val entry = runCatching { zip.nextEntry }.getOrNull() ?: break
                         entries++
                         require(entries <= MAX_IMPORTED_ZIP_ENTRIES) { str(R.string.vm_zip_too_many_files) }
                         val entryName = entry.name.replace('\\', '/').trimStart('/')
-                        require(entryName.isNotBlank() && '\u0000' !in entryName) { str(R.string.vm_zip_invalid_path) }
-                        if (entryName.startsWith("__MACOSX/") || entryName.endsWith("/.DS_Store") || entryName == ".DS_Store") {
-                            zip.closeEntry()
+                        if (entryName.isBlank() || '\u0000' in entryName ||
+                            entryName.startsWith("__MACOSX/") || entryName.endsWith("/.DS_Store") || entryName == ".DS_Store"
+                        ) {
+                            runCatching { zip.closeEntry() }
+                            continue
+                        }
+                        val segments = entryName.split('/')
+                        if (segments.any { it in skippedSegments } ||
+                            entryName.contains("/build/intermediates/") ||
+                            entryName.contains("/build/tmp/") ||
+                            entryName.contains("/.next/cache/")
+                        ) {
+                            skippedGeneratedEntries++
+                            runCatching { zip.closeEntry() }
                             continue
                         }
                         val target = File(destination, entryName).canonicalFile
@@ -3475,8 +3520,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             target.mkdirs()
                         } else {
                             target.parentFile?.mkdirs()
-                            target.outputStream().buffered().use { output ->
-                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            target.outputStream().buffered(32 * 1024).use { output ->
                                 while (true) {
                                     val count = zip.read(buffer)
                                     if (count < 0) break
@@ -3485,16 +3529,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     output.write(buffer, 0, count)
                                 }
                             }
-                            if (entry.time > 0) target.setLastModified(entry.time)
+                            if (entry.time > 0) runCatching { target.setLastModified(entry.time) }
+                            extractedFiles++
+                            if (sampleRelativeFiles.size < 18) {
+                                sampleRelativeFiles += entryName
+                            }
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastProgressEmitAt >= 110L) {
+                                lastProgressEmitAt = now
+                                val mb = "%.1f MB".format(extractedBytes / (1024.0 * 1024.0))
+                                val shortPath = if (entryName.length > 42) "…${entryName.takeLast(41)}" else entryName
+                                _state.update {
+                                    it.copy(projectImportMessage = "Importing $extractedFiles files ($mb) · $shortPath")
+                                }
+                            }
                         }
-                        zip.closeEntry()
+                        runCatching { zip.closeEntry() }
                     }
                 }
             }
-            require(entries > 0 && destination.walkTopDown().any { it.isFile }) { str(R.string.vm_zip_no_files) }
+            require(extractedFiles > 0) { str(R.string.vm_zip_no_files) }
             val preliminary = Project(
                 id = projectId,
-                name = identity.displayName,
+                name = cleanArchiveTitle.ifBlank { identity.displayName },
                 description = "Imported project workspace",
                 language = str(R.string.vm_language_general),
                 slug = identity.slug,
@@ -3503,37 +3560,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val nestedRoot = detectNestedProjectRoot(preliminary)
             val projectRoot = nestedRoot?.let { File(destination, it) } ?: destination
             val metadata = detectImportedProjectMetadata(projectRoot)
-            val safeArchiveName = sanitizeAttachmentName(archiveName).let { name ->
-                if (name.endsWith(".zip", ignoreCase = true)) name else "$name.zip"
-            }
-            val archiveFolder = File(projectRoot, ".pocketdev/imports").apply { mkdirs() }
-            val archivedSource = File(archiveFolder, safeArchiveName)
-            var sourceBytes = 0L
-            resolver.openInputStream(uri)?.buffered()?.use { input ->
-                archivedSource.outputStream().buffered().use { output ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        sourceBytes += count
-                        require(extractedBytes + sourceBytes <= availableLimit) { str(R.string.vm_import_too_large) }
-                        output.write(buffer, 0, count)
-                    }
-                }
-            } ?: error(str(R.string.vm_zip_preserve_failed))
             val project = preliminary.copy(
                 description = metadata.first,
                 language = metadata.second,
                 rootPath = nestedRoot.orEmpty(),
             )
+            val prettySize = if (extractedBytes >= 1024 * 1024) {
+                "%.2f MB".format(extractedBytes / (1024.0 * 1024.0))
+            } else {
+                "${(extractedBytes / 1024L).coerceAtLeast(1L)} KB"
+            }
+            val cleanedSample = sampleRelativeFiles.map { path ->
+                if (!nestedRoot.isNullOrBlank() && path.startsWith("$nestedRoot/")) {
+                    path.removePrefix("$nestedRoot/")
+                } else path
+            }
+            val summary = buildString {
+                appendLine("### Workspace Imported: `${archiveName}`")
+                appendLine("- **Files extracted:** `$extractedFiles` files (`$prettySize`)")
+                appendLine("- **Detected stack:** `${metadata.second}` (${metadata.first})")
+                if (skippedGeneratedEntries > 0) {
+                    appendLine("- **Auto-skipped cache/build bloat:** `$skippedGeneratedEntries` generated entries (`node_modules` / `.gradle` / `build`)")
+                }
+                appendLine()
+                appendLine("**Sample imported files:**")
+                cleanedSample.take(12).forEach { rel ->
+                    appendLine("- `$rel`")
+                }
+                if (extractedFiles > 12) {
+                    appendLine("- _…and ${extractedFiles - 12} more files ready in the top-right Files browser._")
+                }
+            }.trim()
             return ImportedZipProject(
                 project = project,
-                sourceAttachment = ChatAttachment(
-                    displayName = archiveName.take(120),
-                    relativePath = archivedSource.relativeTo(projectRoot).invariantSeparatorsPath,
-                    mimeType = "application/zip",
-                    sizeBytes = sourceBytes,
-                ),
+                summaryText = summary,
             )
         } catch (error: Throwable) {
             destination.deleteRecursively()
@@ -5010,12 +5070,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendPrompt(prompt: String) {
         val project = state.value.activeProject ?: return
-        if (_state.value.agentKind == AgentKind.ANTIGRAVITY &&
+        if (prompt.trim().equals("/compact", ignoreCase = true)) {
+            compactActiveChatContext()
+            return
+        }
+        val usingInstalledCliChat = _state.value.activeCliChatId.isNotBlank()
+        if (!usingInstalledCliChat &&
+            _state.value.agentKind == AgentKind.ANTIGRAVITY &&
             _state.value.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN) {
             _state.update { it.copy(toastMessage = str(R.string.vm_antigravity_signin_before_task)) }
             return
         }
-        if (_state.value.agentKind == AgentKind.DEEPSEEK_HARNESS && _state.value.provider.kind == ProviderKind.CLAUDE) {
+        if (!usingInstalledCliChat &&
+            _state.value.agentKind == AgentKind.DEEPSEEK_HARNESS &&
+            _state.value.provider.kind == ProviderKind.CLAUDE) {
             _state.update { it.copy(toastMessage = str(R.string.vm_dsh_claude_unsupported)) }
             return
         }
@@ -5120,13 +5188,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 appendLine("You may run any bash command, binary, compiler, Python/Node/Rust/Go tool, curl/wget, git/gh, background service, or package manager (`apt-get`, `npm install -g`, `pip install`, `uv`, `cargo`, `bun`).")
                 appendLine("Global CLI paths `/root/.local/bin`, `/root/.npm-global/bin`, `/root/.bun/bin`, `/root/.cargo/bin`, and `/usr/local/bin` are active in PATH.")
                 append("</linux_full_root_capabilities>")
-            }
-            if (snapshot.mcJavaXmlSpecialistEnabled) {
-                appendLine()
-                appendLine()
-                appendLine("<minecraft_launcher_java_xml_kotlin_specialist>")
-                appendLine(MinecraftLauncherKnowledge.buildSpecialistSystemBrief(requestText))
-                append("</minecraft_launcher_java_xml_kotlin_specialist>")
             }
             if (snapshot.customSystemInstructions.isNotBlank()) {
                 appendLine()
@@ -5908,6 +5969,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         activeQuickPty()?.sendLine(command)
+        scheduleCliInstallProbeIfNeeded(command)
     }
 
     fun sendQuickPtyRaw(raw: String) {
@@ -6054,6 +6116,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         activeProjectPty()?.sendLine(command)
+        scheduleCliInstallProbeIfNeeded(command)
+    }
+
+    private fun scheduleCliInstallProbeIfNeeded(command: String) {
+        val lower = command.lowercase()
+        if ("install" in lower || "npm " in lower || "pip " in lower || "uv " in lower || "curl " in lower) {
+            viewModelScope.launch(Dispatchers.IO) {
+                delay(4_500L)
+                refreshInstalledClis()
+                delay(10_000L)
+                refreshInstalledClis()
+            }
+        }
     }
 
     fun sendProjectPtyRaw(raw: String) {
@@ -6123,6 +6198,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         preferences.saveProvider(savedProfile, _state.value.agentKind)
         preferences.onboardingComplete = true
+        preferences.activeCliChatId = ""
         _state.update {
             it.copy(
                 onboardingComplete = true,
@@ -6130,6 +6206,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 provider = savedProfile,
                 savedCustomProviders = currentList,
                 activeCustomProviderId = cleanEntry.id,
+                activeCliChatId = "",
                 toastMessage = "Activated custom provider: ${cleanEntry.name}",
             )
         }
@@ -6163,6 +6240,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         launchCommand: String,
         checkBinary: String = "",
     ) {
+        val inferredBin = checkBinary.trim().ifBlank { launchCommand.trim().substringBefore(' ') }
         val pkg = CliToolPackage(
             id = "custom-${java.util.UUID.randomUUID()}",
             name = name.trim().ifBlank { "Custom CLI" },
@@ -6170,31 +6248,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             description = installCommand.trim(),
             installCommand = installCommand.trim(),
             launchCommand = launchCommand.trim().ifBlank { installCommand.trim() },
-            checkBinary = checkBinary.trim(),
+            checkBinary = inferredBin,
             isCustom = true,
         )
         val updated = listOf(pkg) + preferences.loadSavedCustomClis()
         preferences.saveSavedCustomClis(updated)
         _state.update { it.copy(savedCustomClis = updated, toastMessage = "Added CLI: ${pkg.name}") }
+        refreshInstalledClis()
     }
 
     fun removeCustomCliPackage(id: String) {
         val updated = preferences.loadSavedCustomClis().filterNot { it.id == id }
         preferences.saveSavedCustomClis(updated)
-        _state.update { it.copy(savedCustomClis = updated) }
+        val nextCliId = if (_state.value.activeCliChatId == id) "" else _state.value.activeCliChatId
+        preferences.activeCliChatId = nextCliId
+        _state.update { it.copy(savedCustomClis = updated, activeCliChatId = nextCliId) }
+        refreshInstalledClis()
+    }
+
+    fun refreshInstalledClis() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val rootfs = runCatching {
+                if (installer.isInstalled()) installer.installedRuntime().rootfs else null
+            }.getOrNull()
+            val detected = com.jarves.mh.runtime.InstalledCliRuntimeBridge.discoverInstalledCliIds(
+                rootfs = rootfs,
+                customClis = _state.value.savedCustomClis,
+            )
+            _state.update { it.copy(installedCliIds = detected) }
+        }
+    }
+
+    /**
+     * Switches the main Chat session to use an installed CLI (`opencode`, `codex`, `gemini`, `qwen`, `aider`, or custom CLI),
+     * or pass `""` to return to the built-in Claude/Antigravity/DeepSeek engine.
+     */
+    fun selectCliChatEngine(cliId: String) {
+        if (_state.value.isRunning) {
+            _state.update { it.copy(toastMessage = str(R.string.vm_stop_agent_before_switching)) }
+            return
+        }
+        val cleanId = cliId.trim()
+        preferences.activeCliChatId = cleanId
+        val cliPkg = (_state.value.savedCustomClis + BUILTIN_CLI_PACKAGES).firstOrNull { it.id == cleanId }
+        _state.update {
+            it.copy(
+                activeCliChatId = cleanId,
+                toastMessage = if (cliPkg != null) "Chat engine switched to ${cliPkg.name}" else null,
+            )
+        }
+        refreshInstalledClis()
+    }
+
+    /**
+     * Claude-Code `/compact` action — condenses older conversation messages in the active thread
+     * so context window percentage drops cleanly while preserving recent turns & summary.
+     */
+    fun compactActiveChatContext() {
+        val current = _state.value
+        if (current.isRunning || current.messages.size <= 3) return
+        val keptRecent = current.messages.takeLast(4)
+        val older = current.messages.dropLast(4).filter { !it.text.startsWith("Hi! Tell me") }
+        if (older.isEmpty()) return
+        val summaryBullets = older.takeLast(8).joinToString("\n") { m ->
+            val role = if (m.fromUser) "User" else "Assistant"
+            val snippet = m.text.replace('\n', ' ').trim().take(120)
+            "- **$role:** $snippet${if (m.text.length > 120) "…" else ""}"
+        }
+        val compactedHeader = ChatMessage(
+            fromUser = false,
+            text = "**Context Compacted (`/compact`)** — summarized ${older.size} earlier messages to free context window:\n$summaryBullets",
+        )
+        val compactedList = listOf(compactedHeader) + keptRecent
+        _state.update {
+            it.copy(
+                messages = compactedList,
+                toastMessage = "Context compacted — freed ${older.size} earlier messages",
+            )
+        }
+        persistMessages()
     }
 
     fun setMcJavaXmlSpecialistEnabled(enabled: Boolean) {
-        _state.update {
-            it.copy(
-                mcJavaXmlSpecialistEnabled = enabled,
-                toastMessage = if (enabled) {
-                    "Minecraft Launcher + Java/XML/Kotlin Specialist Brain ON"
-                } else {
-                    "Minecraft Launcher Specialist Brain paused"
-                },
-            )
-        }
+        _state.update { it.copy(mcJavaXmlSpecialistEnabled = false) }
     }
 
     override fun onCleared() {

@@ -196,6 +196,21 @@ class ClaudeRuntimeBridge(
             if (userStopRequested) process.destroy()
             coroutineScope {
                 val permissionWatcher = launch { watchPermissionRequests(sessionId) }
+                val liveDiffWatcher = launch {
+                    var lastEmitted = emptyList<String>()
+                    while (kotlin.coroutines.coroutineContext.isActive && process.isAlive) {
+                        delay(1_800)
+                        runCatching {
+                            val liveChanged = changedFiles(workspace, before)
+                            if (liveChanged.isNotEmpty() && liveChanged != lastEmitted) {
+                                lastEmitted = liveChanged
+                                saveChangedPaths(projectId, liveChanged)
+                                val details = loadPendingChanges(projectId)
+                                eventBus.emit(RuntimeEvent.FilesChanged(sessionId, details))
+                            }
+                        }
+                    }
+                }
                 var lastDiagnostic = ""
                 val pendingOutput = StringBuilder()
                 val nativeProcess = process as? NativeSpawnProcess
@@ -243,6 +258,7 @@ class ClaudeRuntimeBridge(
                 val exit = process.waitFor()
                 Log.d("ClaudeBridge", "Process exited with code $exit")
                 permissionWatcher.cancelAndJoin()
+                liveDiffWatcher.cancelAndJoin()
                 pending.values.filter { it.request.sessionId == sessionId }.forEach { permission ->
                     permission.response.writeText("deny")
                     pending.remove(permission.request.approvalId)
@@ -774,14 +790,18 @@ class ClaudeRuntimeBridge(
             }
             .filter {
                 it.isFile &&
+                    it.length() <= MAX_CHECKPOINT_BACKUP_FILE_BYTES &&
                     !isInternalRuntimePath(it.relativeTo(workspace).invariantSeparatorsPath) &&
                     !java.nio.file.Files.isSymbolicLink(it.toPath())
             }
+            .take(MAX_CHECKPOINT_BACKUP_FILES)
             .forEach { source ->
-                val relative = source.relativeTo(workspace).invariantSeparatorsPath
-                val destination = safeWorkspaceFile(backup, relative)
-                destination.parentFile?.mkdirs()
-                source.copyTo(destination, overwrite = true)
+                runCatching {
+                    val relative = source.relativeTo(workspace).invariantSeparatorsPath
+                    val destination = safeWorkspaceFile(backup, relative)
+                    destination.parentFile?.mkdirs()
+                    source.copyTo(destination, overwrite = true)
+                }
             }
     }
 
@@ -815,14 +835,16 @@ class ClaudeRuntimeBridge(
 
     private fun buildChangeDetails(projectId: String, workspace: File, paths: List<String>): List<ChangeItem> {
         val backup = File(checkpointDir(projectId), "project")
-        return paths.map { path ->
-            val beforeFile = safeWorkspaceFile(backup, path).takeIf(File::isFile)
-            val afterFile = safeWorkspaceFile(workspace, path).takeIf(File::isFile)
-            if (listOfNotNull(beforeFile, afterFile).any { it.length() > MAX_DIFF_FILE_BYTES }) {
-                return@map ChangeItem(
+        return paths.take(MAX_TRACKED_CHANGED_FILES).mapIndexed { index, path ->
+            val beforeFile = runCatching { safeWorkspaceFile(backup, path).takeIf(File::isFile) }.getOrNull()
+            val afterFile = runCatching { safeWorkspaceFile(workspace, path).takeIf(File::isFile) }.getOrNull()
+            if (index >= MAX_DETAILED_DIFF_FILES || listOfNotNull(beforeFile, afterFile).any { it.length() > MAX_DIFF_FILE_BYTES }) {
+                val approxAdd = if (beforeFile == null && afterFile != null) 1 else 0
+                val approxDel = if (beforeFile != null && afterFile == null) 1 else 0
+                return@mapIndexed ChangeItem(
                     path = path,
-                    additions = 0,
-                    deletions = 0,
+                    additions = approxAdd,
+                    deletions = approxDel,
                     diffLines = listOf(
                         DiffLine(
                             DiffLineType.INFO,
@@ -831,8 +853,8 @@ class ClaudeRuntimeBridge(
                     ),
                 )
             }
-            val before = beforeFile?.readBytes() ?: ByteArray(0)
-            val after = afterFile?.readBytes() ?: ByteArray(0)
+            val before = runCatching { beforeFile?.readBytes() }.getOrNull() ?: ByteArray(0)
+            val after = runCatching { afterFile?.readBytes() }.getOrNull() ?: ByteArray(0)
             val binary = before.any { it == 0.toByte() } || after.any { it == 0.toByte() }
             val (additions, deletions) = lineChanges(before, after)
             ChangeItem(
@@ -977,14 +999,21 @@ class ClaudeRuntimeBridge(
     }
 
     private fun digest(file: File): String {
+        if (file.length() > MAX_HASH_FILE_BYTES) {
+            return "meta:${file.length()}:${file.lastModified()}"
+        }
         val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
+        runCatching {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
             }
+        }.onFailure {
+            return "meta:${file.length()}:${file.lastModified()}"
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
@@ -1113,11 +1142,22 @@ class ClaudeRuntimeBridge(
         private const val MAX_DIFF_LINES = 2_000
         private const val MAX_RENDERED_DIFF_LINES = 600
         private const val MAX_DIFF_FILE_BYTES = 1_000_000L
+        private const val MAX_HASH_FILE_BYTES = 4L * 1024L * 1024L
+        private const val MAX_CHECKPOINT_BACKUP_FILE_BYTES = 4L * 1024L * 1024L
+        private const val MAX_CHECKPOINT_BACKUP_FILES = 4_000
+        private const val MAX_DETAILED_DIFF_FILES = 80
+        private const val MAX_TRACKED_CHANGED_FILES = 300
         private const val DIFF_CONTEXT_LINES = 3
         private const val FOREGROUND_PROGRESS_MIN_INTERVAL_MS = 750L
         private const val MAX_CONVERSATION_HISTORY_CHARACTERS = 160_000
         private val IGNORED_DIRECTORY_NAMES = setOf(
             ".claude",
+            ".pocketdev",
+            ".cache",
+            ".cxx",
+            ".kotlin",
+            "__pycache__",
+            ".pytest_cache",
             ".git",
             ".gradle",
             ".idea",
@@ -1125,8 +1165,10 @@ class ClaudeRuntimeBridge(
             ".dart_tool",
             ".venv",
             "build",
+            "coverage",
             "dist",
             "node_modules",
+            "out",
             "target",
             "venv",
         )

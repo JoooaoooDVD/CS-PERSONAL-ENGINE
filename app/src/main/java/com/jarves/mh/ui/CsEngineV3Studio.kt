@@ -42,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Code
@@ -57,12 +58,14 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -250,6 +253,14 @@ fun FullScreenChatMessageItem(
 ) {
     val clipboard = LocalClipboardManager.current
     if (message.fromUser) {
+        var expandLargePrompt by remember(message.id) { mutableStateOf(false) }
+        val isLargeUserText = message.text.length > 4_200
+        val displayPrompt = remember(message.text, expandLargePrompt, isLargeUserText) {
+            if (!isLargeUserText || expandLargePrompt) message.text else message.text.take(2_800) + "\n…"
+        }
+        val promptChunks = remember(displayPrompt) {
+            if (displayPrompt.length <= 2_600) listOf(displayPrompt) else displayPrompt.chunked(2_600)
+        }
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -267,23 +278,37 @@ fun FullScreenChatMessageItem(
                     verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        text = "❯",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
+                    ClaudePromptChevron(
+                        size = 13.dp,
                         color = Color(0xFFD97757),
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                     SelectionContainer(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = message.text,
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontSize = 14.5.sp,
-                                lineHeight = 21.sp,
-                            ),
-                            color = Color(0xFFF4F4F6),
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            promptChunks.forEach { chunk ->
+                                Text(
+                                    text = chunk,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontSize = 14.5.sp,
+                                        lineHeight = 21.sp,
+                                    ),
+                                    color = Color(0xFFF4F4F6),
+                                )
+                            }
+                        }
                     }
+                }
+                if (isLargeUserText) {
+                    Text(
+                        text = if (expandLargePrompt) "Collapse large input" else "Show all ${message.text.length} characters",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFD97757),
+                        modifier = Modifier
+                            .padding(start = 21.dp)
+                            .clickable { expandLargePrompt = !expandLargePrompt },
+                    )
                 }
                 if (message.attachments.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -306,15 +331,14 @@ fun FullScreenChatMessageItem(
                 verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .padding(top = 7.dp)
-                        .size(7.dp)
-                        .background(
-                            if (isStreamingNow) Color(0xFFD97757) else Color(0xFFE4E4E7),
-                            CircleShape,
-                        ),
-                )
+                Box(modifier = Modifier.padding(top = 6.dp)) {
+                    ClaudeStatusDot(
+                        isActive = isStreamingNow,
+                        activeColor = Color(0xFFD97757),
+                        idleColor = Color(0xFFE4E4E7),
+                        size = 7.dp,
+                    )
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     SelectionContainer {
                         MarkdownText(
@@ -411,6 +435,7 @@ fun InlineAgentStepsCard(
     isRunning: Boolean,
     thinkingActive: Boolean,
     elapsedSeconds: Long,
+    streamedTokensEstimate: Int = 0,
     onRunInTerminal: (String) -> Unit,
     onOpenFile: ((String) -> Unit)? = null,
 ) {
@@ -443,22 +468,21 @@ fun InlineAgentStepsCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = if (isRunning) "✻" else "⏺",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isRunning) terracotta else Color(0xFF4ADE80),
-            )
-            Text(
-                text = headerLabel,
+            if (isRunning) {
+                ClaudeStarburstSpinner(size = 14.dp, color = terracotta)
+            } else {
+                ClaudeStatusDot(
+                    isActive = false,
+                    idleColor = Color(0xFF4ADE80),
+                    size = 7.dp,
+                )
+            }
+            ClaudeShimmerStatusText(
+                baseLabel = headerLabel,
+                isRunning = isRunning,
+                thinkingActive = thinkingActive,
+                streamedTokensEstimate = streamedTokensEstimate,
                 modifier = Modifier.weight(1f),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (isRunning) terracotta else Color(0xFF8E8E95),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Icon(
                 if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -480,8 +504,8 @@ fun InlineAgentStepsCard(
                 verticalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 if (visibleItems.isEmpty() && thinkingActive) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ClaudeTreeBranchIcon(size = 12.dp)
                         Text(
                             text = "Analyzing codebase…",
                             fontFamily = FontFamily.Monospace,
@@ -501,7 +525,7 @@ fun InlineAgentStepsCard(
                                 verticalArrangement = Arrangement.spacedBy(3.dp),
                             ) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                    ClaudeTreeBranchIcon(size = 12.dp)
                                     Text(
                                         text = step.title,
                                         fontFamily = FontFamily.Monospace,
@@ -510,7 +534,7 @@ fun InlineAgentStepsCard(
                                         color = Color(0xFFE4E4E7),
                                     )
                                 }
-                                step.detail.split('\n').filter { it.isNotBlank() }.forEach { line ->
+                                step.detail.split('\n').filter { it.isNotBlank() }.take(30).forEach { line ->
                                     val match = Regex("^(.+?)\\s+\\+(\\d+)\\s+-(\\d+)$").find(line.trim())
                                     if (match != null) {
                                         val path = match.groupValues[1].trim()
@@ -558,7 +582,7 @@ fun InlineAgentStepsCard(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                    ClaudeTreeBranchIcon(size = 12.dp)
                                     Text(
                                         text = "Bash(${firstLineCmd.ifBlank { "command" }.take(64)})",
                                         fontFamily = FontFamily.Monospace,
@@ -606,9 +630,10 @@ fun InlineAgentStepsCard(
                         isThink -> {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                ClaudeTreeBranchIcon(size = 12.dp, modifier = Modifier.padding(top = 2.dp))
                                 Text(
                                     text = step.detail.trim().ifBlank { "Thinking…" },
                                     fontSize = 11.5.sp,
@@ -625,7 +650,7 @@ fun InlineAgentStepsCard(
                                 verticalAlignment = Alignment.Top,
                                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                Text("⎿", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFF56565E))
+                                ClaudeTreeBranchIcon(size = 12.dp, modifier = Modifier.padding(top = 2.dp))
                                 Text(
                                     text = "${step.title.removePrefix("Running ").removeSuffix(" completed")}: ${step.detail.replace('\n', ' ').trim()}",
                                     fontFamily = FontFamily.Monospace,
@@ -652,6 +677,8 @@ fun WorkspaceQuickEngineSheet(
     state: AppUiState,
     onDismiss: () -> Unit,
     onSelectAgent: (AgentKind) -> Unit,
+    onSelectCliChatEngine: (String) -> Unit = {},
+    onRefreshInstalledClis: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit,
     onSetAntigravityEffort: (String) -> Unit,
     onActivateCustomProvider: (String) -> Unit,
@@ -660,6 +687,9 @@ fun WorkspaceQuickEngineSheet(
     onToggleFullAccess: (Boolean) -> Unit,
     onOpenCliStore: () -> Unit,
 ) {
+    LaunchedEffect(Unit) {
+        onRefreshInstalledClis()
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val antigravityModels = remember(state.antigravityModels) {
         state.antigravityModels.ifEmpty {
@@ -671,6 +701,10 @@ fun WorkspaceQuickEngineSheet(
                 "claude-opus-4-6-thinking",
             )
         }
+    }
+    val allCliCatalog = remember(state.savedCustomClis) { state.savedCustomClis + BUILTIN_CLI_PACKAGES }
+    val installedCliPackages = remember(allCliCatalog, state.installedCliIds) {
+        allCliCatalog.filter { pkg -> state.installedCliIds.contains(pkg.id) }
     }
 
     ModalBottomSheet(
@@ -710,7 +744,7 @@ fun WorkspaceQuickEngineSheet(
             Text("CODING ENGINE", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 AgentKind.entries.forEach { agent ->
-                    val selected = state.agentKind == agent
+                    val selected = state.activeCliChatId.isBlank() && state.agentKind == agent
                     val installed = state.installedAgentVersions.containsKey(agent)
                     val title = when (agent) {
                         AgentKind.ANTIGRAVITY -> "Antigravity"
@@ -750,8 +784,104 @@ fun WorkspaceQuickEngineSheet(
                 }
             }
 
+            // 1B. Dedicated Chat Mode for Installed Linux CLIs!
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "INSTALLED LINUX CLI CHATS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = EngineEmerald,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = {
+                        onDismiss()
+                        onOpenCliStore()
+                    },
+                ) {
+                    Icon(Icons.Default.Terminal, null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Install CLI", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            if (installedCliPackages.isEmpty()) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onDismiss()
+                            onOpenCliStore()
+                        },
+                    shape = RoundedCornerShape(13.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(Icons.Default.ChatBubbleOutline, null, tint = EngineEmerald, modifier = Modifier.size(18.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Install any CLI to unlock its dedicated Chat", fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
+                            Text("OpenCode, Codex, Gemini CLI, Qwen Code, Aider & custom CLIs get full Chat + File Diffs.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    installedCliPackages.forEach { cli ->
+                        val isSelectedCli = state.activeCliChatId == cli.id
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !state.isRunning) {
+                                    onSelectCliChatEngine(cli.id)
+                                    onDismiss()
+                                },
+                            shape = RoundedCornerShape(13.dp),
+                            color = if (isSelectedCli) EngineEmerald.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+                            border = BorderStroke(1.dp, if (isSelectedCli) EngineEmerald else MaterialTheme.colorScheme.outlineVariant),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Icon(Icons.Default.ChatBubbleOutline, null, tint = EngineEmerald, modifier = Modifier.size(17.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(cli.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Surface(shape = CircleShape, color = EngineEmerald.copy(alpha = 0.16f)) {
+                                            Text(
+                                                if (isSelectedCli) "ACTIVE CHAT" else "CLI CHAT",
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.5.dp),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = EngineEmerald,
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        "`${cli.launchCommand}` · Live Chat + Workspace Diffs",
+                                        fontSize = 10.8.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                if (isSelectedCli) {
+                                    Icon(Icons.Default.CheckCircle, null, tint = EngineEmerald, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 2. Antigravity Model & Effort Controls when Antigravity is active
-            if (state.agentKind == AgentKind.ANTIGRAVITY) {
+            if (state.activeCliChatId.isBlank() && state.agentKind == AgentKind.ANTIGRAVITY) {
                 Text("ANTIGRAVITY IDE MODELS & REASONING", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = EngineEmerald)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("low" to "Fast", "medium" to "Balanced", "high" to "High Reasoning").forEach { (id, label) ->
@@ -1225,11 +1355,18 @@ fun CustomProviderStudioSheet(
 @Composable
 fun CliMarketplaceSheet(
     savedCustomClis: List<CliToolPackage>,
+    installedCliIds: Set<String> = emptySet(),
+    activeCliChatId: String = "",
+    onSelectCliChatEngine: (String) -> Unit = {},
+    onRefreshInstalledClis: () -> Unit = {},
     onRunCommandInTerminal: (String) -> Unit,
     onAddCustomCli: (name: String, installCmd: String, launchCmd: String) -> Unit,
     onRemoveCustomCli: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    LaunchedEffect(Unit) {
+        onRefreshInstalledClis()
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showAddForm by rememberSaveable { mutableStateOf(false) }
     var customName by rememberSaveable { mutableStateOf("") }
@@ -1339,10 +1476,15 @@ fun CliMarketplaceSheet(
             }
 
             items(allPackages, key = { it.id }) { pkg ->
+                val isCliInstalled = installedCliIds.contains(pkg.id)
+                val isChatActive = activeCliChatId == pkg.id
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.36f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isChatActive) EngineEmerald else MaterialTheme.colorScheme.outlineVariant,
+                    ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -1355,7 +1497,7 @@ fun CliMarketplaceSheet(
                                         color = EngineEmerald.copy(alpha = 0.14f),
                                     ) {
                                         Text(
-                                            pkg.category,
+                                            if (isCliInstalled) "Installed · Chat Ready" else pkg.category,
                                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                                             fontSize = 9.5.sp,
                                             fontWeight = FontWeight.Bold,
@@ -1387,11 +1529,30 @@ fun CliMarketplaceSheet(
                                 },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
                             ) {
-                                Icon(Icons.Default.Download, null, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(5.dp))
-                                Text("Install in Linux", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Icon(Icons.Default.Download, null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (isCliInstalled) "Update" else "Install", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                            if (isCliInstalled) {
+                                Button(
+                                    onClick = {
+                                        onSelectCliChatEngine(pkg.id)
+                                        onDismiss()
+                                    },
+                                    modifier = Modifier.weight(1.25f),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = EngineEmerald,
+                                        contentColor = Color(0xFF09090B),
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
+                                ) {
+                                    Icon(Icons.Default.ChatBubbleOutline, null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text(if (isChatActive) "Chat Active" else "Open Chat", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                             OutlinedButton(
                                 onClick = {
@@ -1400,11 +1561,11 @@ fun CliMarketplaceSheet(
                                 },
                                 modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 7.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp),
                             ) {
-                                Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(5.dp))
-                                Text("Launch `${pkg.launchCommand.take(14)}`", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Default.Terminal, null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("CLI", fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -1597,13 +1758,17 @@ fun CodeChangesDiffDeck(
     if (changes.isEmpty()) return
     val totalAdditions = remember(changes) { changes.sumOf { it.additions } }
     val totalDeletions = remember(changes) { changes.sumOf { it.deletions } }
-    var expandedFilePath by rememberSaveable { mutableStateOf<String?>(changes.firstOrNull()?.path) }
+    var expandedFilePath by rememberSaveable { mutableStateOf<String?>(if (changes.size <= 8) changes.firstOrNull()?.path else null) }
+    var showAllChangedFiles by rememberSaveable { mutableStateOf(false) }
+    val visibleChanges = remember(changes, showAllChangedFiles) {
+        if (showAllChangedFiles || changes.size <= 25) changes else changes.take(25)
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF141418),
+        border = BorderStroke(0.9.dp, Color(0xFF26262E)),
     ) {
         Column(
             modifier = Modifier
@@ -1611,7 +1776,6 @@ fun CodeChangesDiffDeck(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Deck Summary Header: "3 files updated  +142  -28  ■■■▪▪   [Undo All] [Keep All]"
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1621,8 +1785,8 @@ fun CodeChangesDiffDeck(
                 Text(
                     text = "${changes.size} ${if (changes.size == 1) "file" else "files"} updated",
                     fontSize = 12.5.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFF4F4F6),
                 )
                 DiffCountPills(additions = totalAdditions, deletions = totalDeletions)
                 DiffProportionalStatBar(additions = totalAdditions, deletions = totalDeletions)
@@ -1630,7 +1794,7 @@ fun CodeChangesDiffDeck(
                 Text(
                     text = "Revert",
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = IdeDiffRed,
                     modifier = Modifier
                         .clickable(onClick = onUndoAll)
@@ -1640,29 +1804,34 @@ fun CodeChangesDiffDeck(
                     onClick = onKeepAll,
                     shape = RoundedCornerShape(7.dp),
                     color = IdeDiffGreen.copy(alpha = 0.16f),
-                    border = BorderStroke(1.dp, IdeDiffGreen.copy(alpha = 0.5f)),
+                    border = BorderStroke(0.9.dp, IdeDiffGreen.copy(alpha = 0.5f)),
                 ) {
-                    Text(
-                        text = "Keep All ✓",
+                    Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = IdeDiffGreen,
-                    )
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Icon(Icons.Default.Check, null, tint = IdeDiffGreen, modifier = Modifier.size(12.dp))
+                        Text(
+                            text = "Keep All",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = IdeDiffGreen,
+                        )
+                    }
                 }
             }
 
-            // Per-file Expandable Unified Diff Cards
-            changes.forEach { change ->
+            visibleChanges.forEach { change ->
                 val isExpanded = expandedFilePath == change.path
                 val fileName = change.path.substringAfterLast('/')
                 val parentDir = change.path.substringBeforeLast('/', "")
                 Surface(
-                    shape = RoundedCornerShape(11.dp),
-                    color = Color(0xFF0A0C10),
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF0E0E12),
                     border = BorderStroke(
-                        1.dp,
-                        if (isExpanded) IdeDiffGreen.copy(alpha = 0.42f) else MaterialTheme.colorScheme.outlineVariant,
+                        0.8.dp,
+                        if (isExpanded) IdeDiffGreen.copy(alpha = 0.42f) else Color(0xFF23232B),
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -1681,8 +1850,8 @@ fun CodeChangesDiffDeck(
                                     text = fileName,
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFF1F5F9),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFF4F4F6),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -1691,7 +1860,7 @@ fun CodeChangesDiffDeck(
                                         text = parentDir,
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 9.8.sp,
-                                        color = Color(0xFF64748B),
+                                        color = Color(0xFF71717A),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -1701,42 +1870,50 @@ fun CodeChangesDiffDeck(
                             Icon(
                                 if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                                 contentDescription = null,
-                                tint = Color(0xFF94A3B8),
+                                tint = Color(0xFF8E8E95),
                                 modifier = Modifier.size(16.dp),
                             )
                         }
 
                         AnimatedVisibility(visible = isExpanded) {
                             Column(modifier = Modifier.fillMaxWidth()) {
-                                HorizontalDivider(color = Color(0xFF1A1F29))
+                                HorizontalDivider(color = Color(0xFF1F1F26))
                                 if (change.binary) {
                                     Text(
                                         text = "Binary file modified",
                                         modifier = Modifier.padding(10.dp),
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 11.sp,
-                                        color = Color(0xFF94A3B8),
+                                        color = Color(0xFF8E8E95),
                                     )
-                                } else if (change.diffLines.isNotEmpty()) {
+                                } else if (change.diffLines.isEmpty()) {
+                                    Text(
+                                        text = "Large file summary (+${change.additions} / -${change.deletions} lines) — tap Open in Editor to view full contents.",
+                                        modifier = Modifier.padding(10.dp),
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF8E8E95),
+                                    )
+                                } else {
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .heightIn(max = 260.dp)
+                                            .heightIn(max = 240.dp)
                                             .verticalScroll(rememberScrollState())
                                             .horizontalScroll(rememberScrollState())
-                                            .background(Color(0xFF06080B))
+                                            .background(Color(0xFF0A0A0D))
                                             .padding(vertical = 4.dp),
                                     ) {
-                                        change.diffLines.take(180).forEach { line ->
+                                        change.diffLines.take(120).forEach { line ->
                                             IdeUnifiedDiffRow(line = line)
                                         }
                                     }
                                 }
-                                HorizontalDivider(color = Color(0xFF1A1F29))
+                                HorizontalDivider(color = Color(0xFF1F1F26))
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .background(Color(0xFF0D1016))
+                                        .background(Color(0xFF121217))
                                         .padding(horizontal = 8.dp, vertical = 6.dp),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1745,15 +1922,15 @@ fun CodeChangesDiffDeck(
                                         Surface(
                                             onClick = { onOpenFile(change.path) },
                                             shape = RoundedCornerShape(7.dp),
-                                            color = Color(0xFF171C26),
-                                            border = BorderStroke(1.dp, Color(0xFF283040)),
+                                            color = Color(0xFF1A1A22),
+                                            border = BorderStroke(0.8.dp, Color(0xFF2B2B36)),
                                         ) {
                                             Text(
                                                 text = "Open in Editor",
                                                 modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                                                 fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = EngineCyan,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFFD97757),
                                             )
                                         }
                                     }
@@ -1765,15 +1942,16 @@ fun CodeChangesDiffDeck(
                                         },
                                         shape = RoundedCornerShape(7.dp),
                                         color = Color(0xFF221115),
-                                        border = BorderStroke(1.dp, IdeDiffRed.copy(alpha = 0.4f)),
+                                        border = BorderStroke(0.8.dp, IdeDiffRed.copy(alpha = 0.4f)),
                                     ) {
-                                        Text(
-                                            text = "Undo ↺",
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = IdeDiffRed,
-                                        )
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                        ) {
+                                            Icon(Icons.Default.Replay, null, tint = IdeDiffRed, modifier = Modifier.size(11.dp))
+                                            Text("Undo", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = IdeDiffRed)
+                                        }
                                     }
                                     Surface(
                                         onClick = {
@@ -1782,21 +1960,36 @@ fun CodeChangesDiffDeck(
                                         },
                                         shape = RoundedCornerShape(7.dp),
                                         color = IdeDiffGreen.copy(alpha = 0.16f),
-                                        border = BorderStroke(1.dp, IdeDiffGreen.copy(alpha = 0.48f)),
+                                        border = BorderStroke(0.8.dp, IdeDiffGreen.copy(alpha = 0.48f)),
                                     ) {
-                                        Text(
-                                            text = "Keep ✓",
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                            fontSize = 10.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = IdeDiffGreen,
-                                        )
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                        ) {
+                                            Icon(Icons.Default.Check, null, tint = IdeDiffGreen, modifier = Modifier.size(11.dp))
+                                            Text("Keep", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = IdeDiffGreen)
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            if (changes.size > 25) {
+                Text(
+                    text = if (showAllChangedFiles) "Show top 25 modified files" else "Show all ${changes.size} modified files",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFD97757),
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .clickable { showAllChangedFiles = !showAllChangedFiles }
+                        .padding(vertical = 4.dp),
+                )
             }
         }
     }
@@ -1912,9 +2105,9 @@ fun AntigravityMobileComposerStrip(
                 else -> "low"
             }
             val effortDisplay = when (antigravityEffort) {
-                "low" -> "⚡ Fast"
-                "medium" -> "⚡ Balanced"
-                else -> "✦ High"
+                "low" -> "Fast"
+                "medium" -> "Balanced"
+                else -> "High"
             }
             Surface(
                 onClick = { onSelectEffort(nextEffort) },
@@ -1922,13 +2115,19 @@ fun AntigravityMobileComposerStrip(
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                Text(
-                    text = effortDisplay,
+                Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    fontSize = 10.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = EngineEmerald,
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(Icons.Default.Bolt, null, tint = EngineEmerald, modifier = Modifier.size(12.dp))
+                    Text(
+                        text = effortDisplay,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = EngineEmerald,
+                    )
+                }
             }
         } else {
             Surface(
@@ -1985,7 +2184,6 @@ fun AntigravityMobileComposerStrip(
             }
         }
 
-        // Active Git Branch micro-pill + 1-tap Termux launcher
         if (gitBranch.isNotBlank()) {
             Surface(
                 shape = RoundedCornerShape(8.dp),
@@ -1993,28 +2191,13 @@ fun AntigravityMobileComposerStrip(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Text(
-                    text = "⎇ $gitBranch",
+                    text = gitBranch,
                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
                     fontFamily = FontFamily.Monospace,
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = EngineCyan.copy(alpha = 0.12f),
-            border = BorderStroke(0.8.dp, EngineCyan.copy(alpha = 0.4f)),
-        ) {
-            Text(
-                text = "⚡ Java·XML·KT",
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 9.5.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = EngineCyan,
-            )
         }
 
         Surface(

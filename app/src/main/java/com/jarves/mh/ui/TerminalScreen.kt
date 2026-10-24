@@ -55,9 +55,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardHide
 import androidx.compose.material.icons.filled.Mic
@@ -324,7 +327,7 @@ fun TerminalScreen(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
 
-    var fontSizeSp by rememberSaveable { mutableFloatStateOf(12f) }
+    var fontSizeSp by rememberSaveable { mutableFloatStateOf(11f) }
     var ctrlSticky by rememberSaveable { mutableStateOf(false) }
     var altSticky by rememberSaveable { mutableStateOf(false) }
     var selectionMode by rememberSaveable { mutableStateOf(false) }
@@ -567,35 +570,38 @@ fun TerminalScreen(
                 .fillMaxWidth()
                 .background(ConsoleCanvasBg),
         ) {
-            val fontPx = with(density) { fontSizeSp.sp.toPx() }.coerceAtLeast(13f)
-            val horizontalPadPx = with(density) { 6.dp.toPx() }
-            val verticalPadPx = with(density) { 4.dp.toPx() }
+            val fontPx = with(density) { fontSizeSp.sp.toPx() }.coerceAtLeast(12f)
+            val horizontalPadPx = with(density) { 4.dp.toPx() }
+            val verticalPadPx = with(density) { 3.dp.toPx() }
 
             val textPaint = remember(fontPx) {
                 AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG or AndroidPaint.SUBPIXEL_TEXT_FLAG).apply {
                     typeface = Typeface.MONOSPACE
                     textSize = fontPx
+                    letterSpacing = 0f
                 }
             }
             val boldTextPaint = remember(fontPx) {
                 AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG or AndroidPaint.SUBPIXEL_TEXT_FLAG).apply {
                     typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                     textSize = fontPx
+                    letterSpacing = 0f
                 }
             }
 
-            val rawGlyphWidth = remember(textPaint) { textPaint.measureText("M").coerceAtLeast(6f) }
+            // Exact unstretched glyph advance & tight PC Linux line height (zero artificial letter gaps!)
+            val rawGlyphWidth = remember(textPaint) { textPaint.measureText("M").coerceAtLeast(5.5f) }
             val fontAscent = remember(textPaint) { -textPaint.fontMetrics.ascent }
             val fontDescent = remember(textPaint) { textPaint.fontMetrics.descent }
             val cellHeightPx = remember(fontAscent, fontDescent) {
-                ceil(fontAscent + fontDescent + 2f).coerceAtLeast(12f)
+                ceil((fontAscent + fontDescent) * 0.98f).coerceAtLeast(11f)
             }
 
             val usableWidthPx = (constraints.maxWidth - horizontalPadPx * 2f).coerceAtLeast(120f)
             val usableHeightPx = (constraints.maxHeight - verticalPadPx * 2f).coerceAtLeast(80f)
-            val computedCols = floor(usableWidthPx / rawGlyphWidth).toInt().coerceIn(28, 280)
-            val computedRows = floor(usableHeightPx / cellHeightPx).toInt().coerceIn(10, 160)
-            val cellWidthPx = usableWidthPx / computedCols.toFloat()
+            val computedCols = floor(usableWidthPx / rawGlyphWidth).toInt().coerceIn(32, 300)
+            val computedRows = floor(usableHeightPx / cellHeightPx).toInt().coerceIn(10, 180)
+            val cellWidthPx = rawGlyphWidth
 
             LaunchedEffect(computedRows, computedCols, activeSessionTabId) {
                 onResizePty?.invoke(computedRows, computedCols)
@@ -721,13 +727,19 @@ fun TerminalScreen(
                 ) {
                     if (renderRows.isEmpty()) {
                         drawIntoCanvas { canvas ->
-                            textPaint.color = 0xFFD97757.toInt()
-                            canvas.nativeCanvas.drawText(
-                                "~/workspace ❯ ",
-                                horizontalPadPx,
-                                verticalPadPx + fontAscent,
-                                textPaint,
-                            )
+                            boldTextPaint.color = 0xFF4ADE80.toInt()
+                            val p1 = "root@linux"
+                            canvas.nativeCanvas.drawText(p1, horizontalPadPx, verticalPadPx + fontAscent, boldTextPaint)
+                            val w1 = boldTextPaint.measureText(p1)
+                            textPaint.color = 0xFFF4F4F6.toInt()
+                            canvas.nativeCanvas.drawText(":", horizontalPadPx + w1, verticalPadPx + fontAscent, textPaint)
+                            val wColon = textPaint.measureText(":")
+                            boldTextPaint.color = 0xFF60A5FA.toInt()
+                            val p2 = "/workspace"
+                            canvas.nativeCanvas.drawText(p2, horizontalPadPx + w1 + wColon, verticalPadPx + fontAscent, boldTextPaint)
+                            val w2 = boldTextPaint.measureText(p2)
+                            textPaint.color = 0xFFF4F4F6.toInt()
+                            canvas.nativeCanvas.drawText("# ", horizontalPadPx + w1 + wColon + w2, verticalPadPx + fontAscent, textPaint)
                         }
                         return@Canvas
                     }
@@ -798,26 +810,68 @@ fun TerminalScreen(
                             }
                         }
 
-                        for (c in 0 until rowLen) {
-                            val ch = rowObj.chars[c]
-                            if (ch <= ' ') continue
+                        var col = 0
+                        while (col < rowLen) {
+                            val ch = rowObj.chars[col]
+                            if (ch <= ' ') {
+                                col++
+                                continue
+                            }
                             val isBlockCursorHere = showCursor &&
                                 absRowIdx == absCursorRow &&
-                                c == absCursorCol &&
+                                col == absCursorCol &&
                                 (snap?.cursorStyle ?: 1) in 0..2
-                            val rawFg = if (isBlockCursorHere) 0xFF0C0C0E.toInt() else rowObj.fg[c]
-                            val fl = rowObj.flags[c].toInt()
+                            val rawFg = if (isBlockCursorHere) 0xFF0C0C0E.toInt() else rowObj.fg[col]
+                            val fl = rowObj.flags[col].toInt()
                             val fgColor = if ((fl and Vt100TerminalEmulator.FLAG_DIM) != 0 && !isBlockCursorHere) {
                                 Color(rawFg).copy(alpha = 0.62f)
                             } else {
                                 Color(rawFg)
                             }
-                            val xLeft = horizontalPadPx + c * cellWidthPx
+                            val xLeft = horizontalPadPx + col * cellWidthPx
 
                             if (ch.code in 0x2500..0x259F || ch.code in 0x2800..0x28FF) {
                                 if (drawCustomTerminalGlyph(ch, xLeft, yTop, cellWidthPx, cellHeightPx, fgColor)) {
+                                    col++
                                     continue
                                 }
+                            }
+
+                            // Batch contiguous printable ASCII runs sharing identical style & foreground
+                            // so words render with exact native PC Linux monospace metrics & zero artificial spacing!
+                            if (!isBlockCursorHere && ch.code in 0x20..0x7E) {
+                                var runEnd = col + 1
+                                while (runEnd < rowLen) {
+                                    val nextCh = rowObj.chars[runEnd]
+                                    val nextIsCursor = showCursor &&
+                                        absRowIdx == absCursorRow &&
+                                        runEnd == absCursorCol &&
+                                        (snap?.cursorStyle ?: 1) in 0..2
+                                    if (nextIsCursor ||
+                                        nextCh.code !in 0x20..0x7E ||
+                                        rowObj.fg[runEnd] != rawFg ||
+                                        rowObj.flags[runEnd].toInt() != fl
+                                    ) {
+                                        break
+                                    }
+                                    runEnd++
+                                }
+                                val bold = (fl and Vt100TerminalEmulator.FLAG_BOLD) != 0
+                                val paint = if (bold) boldTextPaint else textPaint
+                                paint.isUnderlineText = (fl and Vt100TerminalEmulator.FLAG_UNDERLINE) != 0
+                                paint.textSkewX = if ((fl and Vt100TerminalEmulator.FLAG_ITALIC) != 0) -0.20f else 0f
+                                paint.color = if ((fl and Vt100TerminalEmulator.FLAG_DIM) != 0) {
+                                    ((0x9E shl 24) or (rawFg and 0x00FFFFFF))
+                                } else {
+                                    rawFg
+                                }
+                                val startIdx = col
+                                val count = runEnd - col
+                                drawIntoCanvas { canvas ->
+                                    canvas.nativeCanvas.drawText(rowObj.chars, startIdx, count, xLeft, baselineY, paint)
+                                }
+                                col = runEnd
+                                continue
                             }
 
                             val bold = (fl and Vt100TerminalEmulator.FLAG_BOLD) != 0 || isBlockCursorHere
@@ -833,6 +887,7 @@ fun TerminalScreen(
                             drawIntoCanvas { canvas ->
                                 canvas.nativeCanvas.drawText(singleCharBuf, 0, 1, xLeft, baselineY, paint)
                             }
+                            col++
                         }
                     }
                 }
@@ -859,10 +914,10 @@ fun TerminalScreen(
                         StudioMacroPill("TAB") { sendKeyBytes("\t"); focusTerminal() }
                         StudioMacroPill("CTRL", active = ctrlSticky) { ctrlSticky = !ctrlSticky; focusTerminal() }
                         StudioMacroPill("ALT", active = altSticky) { altSticky = !altSticky; focusTerminal() }
-                        StudioMacroPill("◀") { sendKeyBytes("\u001B[D"); focusTerminal() }
-                        StudioMacroPill("▼") { sendKeyBytes("\u001B[B"); focusTerminal() }
-                        StudioMacroPill("▲") { sendKeyBytes("\u001B[A"); focusTerminal() }
-                        StudioMacroPill("▶") { sendKeyBytes("\u001B[C"); focusTerminal() }
+                        StudioMacroIconPill(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Left") { sendKeyBytes("\u001B[D"); focusTerminal() }
+                        StudioMacroIconPill(Icons.Default.KeyboardArrowDown, "Down") { sendKeyBytes("\u001B[B"); focusTerminal() }
+                        StudioMacroIconPill(Icons.Default.KeyboardArrowUp, "Up") { sendKeyBytes("\u001B[A"); focusTerminal() }
+                        StudioMacroIconPill(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Right") { sendKeyBytes("\u001B[C"); focusTerminal() }
                         StudioMacroPill("/") { sendKeyBytes("/"); focusTerminal() }
                         StudioMacroPill("-") { sendKeyBytes("-"); focusTerminal() }
                         StudioMacroPill("~") { sendKeyBytes("~"); focusTerminal() }
@@ -882,6 +937,32 @@ fun TerminalScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun StudioMacroIconPill(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(6.dp),
+        color = Color(0xFF19191E),
+        border = BorderStroke(0.7.dp, ConsoleBorder),
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color(0xFFD4D4D8),
+                modifier = Modifier.size(14.dp),
+            )
         }
     }
 }

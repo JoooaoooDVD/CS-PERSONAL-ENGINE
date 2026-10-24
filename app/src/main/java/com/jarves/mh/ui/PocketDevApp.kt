@@ -187,6 +187,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -218,6 +219,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.jarves.mh.model.ActivityItem
 import com.jarves.mh.model.AgentKind
+import com.jarves.mh.model.BUILTIN_CLI_PACKAGES
 import com.jarves.mh.model.ChangeItem
 import com.jarves.mh.model.ChatMessage
 import com.jarves.mh.model.ChatAttachment
@@ -514,6 +516,9 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onAddCustomCli = { name, install, launch -> viewModel.addCustomCliPackage(name, install, launch) },
             onRemoveCustomCli = viewModel::removeCustomCliPackage,
             onSetMcJavaXmlSpecialist = viewModel::setMcJavaXmlSpecialistEnabled,
+            onSelectCliChatEngine = viewModel::selectCliChatEngine,
+            onRefreshInstalledClis = viewModel::refreshInstalledClis,
+            onCompactContext = viewModel::compactActiveChatContext,
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -2381,7 +2386,7 @@ private fun SetupLogPanel(logs: List<String>) {
                         )
                     }
                     Text(
-                        text = "▌",
+                        text = "|",
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.primary,
@@ -2516,10 +2521,14 @@ private fun RootScreenHost(
     val importZipHomeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.importZipProject(uri)
     }
+    val activeHomeCli = (state.savedCustomClis + BUILTIN_CLI_PACKAGES).firstOrNull {
+        state.activeCliChatId.isNotBlank() && it.id == state.activeCliChatId
+    }
     val customHomeProvider = state.savedCustomProviders.firstOrNull {
         state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId
     }
     val activeHomeModelLabel = when {
+        activeHomeCli != null -> "${activeHomeCli.name} · ${activeHomeCli.launchCommand}"
         state.agentKind == AgentKind.ANTIGRAVITY -> "antigravity · ${formatAntigravityModelName(state.antigravityModel.ifBlank { "gemini-3.8-flash-high" })}"
         customHomeProvider != null -> "${customHomeProvider.name} · ${customHomeProvider.model}"
         else -> "${state.agentKind.localizedTitle()} · ${state.provider.model.ifBlank { state.provider.kind.localizedTitle() }}"
@@ -2726,6 +2735,10 @@ private fun RootScreenHost(
     if (showHomeCliHub) {
         CliMarketplaceSheet(
             savedCustomClis = state.savedCustomClis,
+            installedCliIds = state.installedCliIds,
+            activeCliChatId = state.activeCliChatId,
+            onSelectCliChatEngine = viewModel::selectCliChatEngine,
+            onRefreshInstalledClis = viewModel::refreshInstalledClis,
             onRunCommandInTerminal = { cmd ->
                 activeNavId = "CONSOLE"
                 if (state.interactivePtyMode) viewModel.sendQuickPtyCommand(cmd)
@@ -4699,9 +4712,13 @@ private fun WorkspaceScreen(
     onAddCustomCli: (String, String, String) -> Unit = { _, _, _ -> },
     onRemoveCustomCli: (String) -> Unit = {},
     onSetMcJavaXmlSpecialist: (Boolean) -> Unit = {},
+    onSelectCliChatEngine: (String) -> Unit = {},
+    onRefreshInstalledClis: () -> Unit = {},
+    onCompactContext: () -> Unit = {},
 ) {
     var showGitStudio by rememberSaveable { mutableStateOf(false) }
     var showQuickEngineSheet by rememberSaveable { mutableStateOf(false) }
+    var showBenchmarkSheet by rememberSaveable { mutableStateOf(false) }
     var showCustomProviderStudio by rememberSaveable { mutableStateOf(false) }
     var editingCustomProviderId by rememberSaveable { mutableStateOf<String?>(null) }
     var showWorkspaceCliHub by rememberSaveable { mutableStateOf(false) }
@@ -4941,19 +4958,55 @@ private fun WorkspaceScreen(
             dismissButton = { TextButton(onClick = onTerminalCancel) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
-    val isAntigravityActive = state.agentKind == AgentKind.ANTIGRAVITY
+    val activeCliPkg = (state.savedCustomClis + BUILTIN_CLI_PACKAGES).firstOrNull {
+        state.activeCliChatId.isNotBlank() && it.id == state.activeCliChatId
+    }
+    val isAntigravityActive = activeCliPkg == null && state.agentKind == AgentKind.ANTIGRAVITY
     val activeSavedCustom = state.savedCustomProviders.firstOrNull {
-        state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId
+        activeCliPkg == null && state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId
     }
     val headerAgentLabel = when {
+        activeCliPkg != null -> activeCliPkg.name
         isAntigravityActive -> "Antigravity"
         activeSavedCustom != null -> activeSavedCustom.name
         else -> state.provider.kind.localizedTitle()
     }
     val headerModelLabel = when {
+        activeCliPkg != null -> activeCliPkg.launchCommand
         isAntigravityActive -> formatAntigravityModelName(state.antigravityModel.ifBlank { "gemini-3.8-flash-high" })
         activeSavedCustom != null -> activeSavedCustom.model
         else -> state.provider.model.ifBlank { state.agentKind.localizedTitle() }
+    }
+    val benchmarkStats = remember(
+        state.messages,
+        state.streamingAssistantPreview,
+        state.pendingAttachments,
+        headerModelLabel,
+        state.taskStartedAtMillis,
+        state.taskFinishedAtMillis,
+        state.isRunning,
+    ) {
+        computeClaudeSessionBenchmark(
+            messages = state.messages,
+            streamingPreview = state.streamingAssistantPreview,
+            pendingAttachments = state.pendingAttachments,
+            activeModelLabel = headerModelLabel,
+            taskStartedAtMillis = state.workSegmentStartedAtMillis ?: state.taskStartedAtMillis,
+            taskFinishedAtMillis = state.taskFinishedAtMillis,
+            isRunning = state.isRunning,
+        )
+    }
+
+    if (showBenchmarkSheet) {
+        ClaudeBenchmarkSheet(
+            stats = benchmarkStats,
+            activeEngineName = headerAgentLabel,
+            activeModelName = headerModelLabel,
+            changes = state.changes,
+            canCompact = !state.isRunning && state.messages.size > 4,
+            onCompactContext = onCompactContext,
+            onDismiss = { showBenchmarkSheet = false },
+        )
     }
 
     if (showQuickEngineSheet) {
@@ -4961,6 +5014,8 @@ private fun WorkspaceScreen(
             state = state,
             onDismiss = { showQuickEngineSheet = false },
             onSelectAgent = onSelectAgent,
+            onSelectCliChatEngine = onSelectCliChatEngine,
+            onRefreshInstalledClis = onRefreshInstalledClis,
             onSetAntigravityModel = onSetAntigravityModel,
             onSetAntigravityEffort = onSetAntigravityEffort,
             onActivateCustomProvider = { id ->
@@ -4996,6 +5051,10 @@ private fun WorkspaceScreen(
     if (showWorkspaceCliHub) {
         CliMarketplaceSheet(
             savedCustomClis = state.savedCustomClis,
+            installedCliIds = state.installedCliIds,
+            activeCliChatId = state.activeCliChatId,
+            onSelectCliChatEngine = onSelectCliChatEngine,
+            onRefreshInstalledClis = onRefreshInstalledClis,
             onRunCommandInTerminal = { cliCmd ->
                 studioMode = "CONSOLE"
                 onTerminalOpened()
@@ -5338,19 +5397,15 @@ private fun WorkspaceScreen(
             Row(
                 modifier = Modifier
                     .align(Alignment.Center)
+                    .padding(end = 96.dp, start = 36.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable { showChats = true }
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 if (state.isRunning) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFD97757)),
-                    )
+                    ClaudeStarburstSpinner(size = 13.dp, color = Color(0xFFD97757))
                 }
                 Text(
                     text = if (state.messages.isEmpty()) {
@@ -5358,7 +5413,7 @@ private fun WorkspaceScreen(
                     } else {
                         state.activeProject?.name ?: "Session"
                     },
-                    fontSize = 15.sp,
+                    fontSize = 14.5.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFFF4F4F6),
                     maxLines = 1,
@@ -5366,12 +5421,18 @@ private fun WorkspaceScreen(
                 )
             }
 
-            // Right: Small Files button + Small Full-Page CLI button + Small `⋯` circle menu (ZERO Preview button!)
+            // Right: Context `%` Benchmark Pill + Small Files button + Small Full-Page CLI button + Small `⋯` circle menu
             Row(
                 modifier = Modifier.align(Alignment.CenterEnd),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                ClaudeContextBenchmarkPill(
+                    stats = benchmarkStats,
+                    isRunning = state.isRunning,
+                    onClick = { showBenchmarkSheet = true },
+                )
+
                 // Small Files button in clean top-right position
                 Surface(
                     onClick = {
@@ -5510,23 +5571,17 @@ private fun WorkspaceScreen(
                             },
                         )
                         DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = if (state.mcJavaXmlSpecialistEnabled) "MC Kit · Java/XML/KT (ON)" else "MC Launcher Kit",
-                                    fontSize = 13.sp,
-                                    color = Color(0xFFF4F4F6),
-                                )
-                            },
+                            text = { Text("Context & Speed Benchmark (${benchmarkStats.usedPercent.toInt()}%)", fontSize = 13.sp, color = Color(0xFFF4F4F6)) },
                             leadingIcon = {
-                                Icon(Icons.Default.Bolt, null, tint = Color(0xFF34D399), modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Bolt, null, tint = Color(0xFFD97757), modifier = Modifier.size(16.dp))
                             },
                             onClick = {
                                 showSessionOverflowMenu = false
-                                studioMode = "MC_KIT"
+                                showBenchmarkSheet = true
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("CLI Tools (claude / opencode)", fontSize = 13.sp, color = Color(0xFFF4F4F6)) },
+                            text = { Text("CLI Tools & CLI Chat Hub", fontSize = 13.sp, color = Color(0xFFF4F4F6)) },
                             leadingIcon = {
                                 Icon(WorkspaceTab.TERMINAL.icon, null, tint = Color(0xFFB4B4C0), modifier = Modifier.size(16.dp))
                             },
@@ -7070,7 +7125,12 @@ private fun ChatTab(
         view.keepScreenOn = isRunning
         onDispose { view.keepScreenOn = false }
     }
-    var prompt by rememberSaveable { mutableStateOf("") }
+    var prompt by rememberSaveable(
+        stateSaver = Saver(
+            save = { if (it.length <= 16_000) it else "" },
+            restore = { it },
+        ),
+    ) { mutableStateOf("") }
     var showPowerPopover by remember { mutableStateOf(false) }
     val chatScope = rememberCoroutineScope()
     val readerAtBottom by remember {
@@ -7150,6 +7210,7 @@ private fun ChatTab(
                             isRunning = isRunning,
                             thinkingActive = thinkingActive,
                             elapsedSeconds = liveElapsedSeconds,
+                            streamedTokensEstimate = (streamingPreview?.length ?: 0) / 4,
                             onRunInTerminal = onRunInTerminal,
                             onOpenFile = onOpenFile,
                         )

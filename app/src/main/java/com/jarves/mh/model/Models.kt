@@ -484,6 +484,13 @@ data class EngineSlashCommand(
 
 val ENGINE_SLASH_COMMANDS: List<EngineSlashCommand> = listOf(
     EngineSlashCommand(
+        command = "/compact",
+        title = "Compact Session Context",
+        description = "Trim older messages to free context window % and keep responses ultra-fast",
+        expandedPrompt = "/compact",
+        immediateAction = "compact",
+    ),
+    EngineSlashCommand(
         command = "/push",
         title = "Commit & Push to GitHub",
         description = "Inspect git status, craft a clean commit message, commit all changes, and push to origin",

@@ -113,6 +113,11 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("cs_active_custom_provider_id", "") ?: ""
         set(value) { preferences.edit().putString("cs_active_custom_provider_id", value).apply() }
 
+    /** Currently active installed CLI Chat Engine ID (empty when using a built-in AgentKind). */
+    var activeCliChatId: String
+        get() = preferences.getString("cs_active_cli_chat_id", "") ?: ""
+        set(value) { preferences.edit().putString("cs_active_cli_chat_id", value).apply() }
+
     fun loadSavedCustomProviders(): List<SavedCustomProvider> = runCatching {
         val raw = preferences.getString("cs_saved_custom_providers_json", null) ?: return emptyList()
         val array = JSONArray(raw)

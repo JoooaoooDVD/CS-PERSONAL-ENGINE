@@ -72,7 +72,11 @@ class InteractivePtySession(
             val initRc = """
                 unset COLUMNS LINES
                 stty sane echo icanon icrnl rows $rows cols $cols 2>/dev/null || true
-                shopt -s checkwinsize 2>/dev/null || true
+                cat > /tmp/.cs_linux_bashrc << 'CSRC'
+                unset COLUMNS LINES
+                shopt -s checkwinsize histappend 2>/dev/null || true
+                export HISTCONTROL=ignoreboth
+                export HISTSIZE=5000
                 export DEBIAN_FRONTEND=noninteractive
                 export APT_LISTCHANGES_FRONTEND=none
                 export PIP_BREAK_SYSTEM_PACKAGES=1
@@ -82,12 +86,17 @@ class InteractivePtySession(
                 export TERM=xterm-256color
                 export COLORTERM=truecolor
                 export PATH="/root/.local/bin:/root/.npm-global/bin:/root/.bun/bin:/root/.cargo/bin:/root/.deno/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${'$'}PATH"
-                alias ls='ls --color=auto'
+                if command -v dircolors >/dev/null 2>&1; then
+                  eval "${'$'}(dircolors -b 2>/dev/null)" || true
+                fi
+                alias ls='ls --color=auto -CF'
                 alias ll='ls -lah --color=auto'
+                alias la='ls -A --color=auto'
                 alias grep='grep --color=auto'
-                export PS1='\[\033[38;5;246m\]\w\[\033[0m\] \[\033[38;2;217;119;87m\]❯\[\033[0m\] '
+                export PS1='\[\033[01;32m\]root@linux\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]# '
+                CSRC
                 cd ${shellSingleQuote(guestWorkspacePath)} 2>/dev/null || true
-                exec /usr/bin/bash --norc --noprofile -i
+                exec /usr/bin/bash --rcfile /tmp/.cs_linux_bashrc -i
             """.trimIndent()
             startSnapshotCoalescer()
             val spawned = installer.process(
