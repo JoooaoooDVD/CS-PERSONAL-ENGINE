@@ -119,7 +119,7 @@ class InstalledCliRuntimeBridge(
                 if (apiSecret.isNotBlank()) {
                     when (provider.kind) {
                         ProviderKind.ANTHROPIC -> put("ANTHROPIC_API_KEY", apiSecret)
-                        ProviderKind.OPENAI, ProviderKind.OPENAI_CUSTOM -> {
+                        ProviderKind.OPENAI_CUSTOM -> {
                             put("OPENAI_API_KEY", apiSecret)
                             if (provider.baseUrl.isNotBlank()) put("OPENAI_BASE_URL", provider.baseUrl)
                         }
@@ -250,19 +250,23 @@ class InstalledCliRuntimeBridge(
 
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) = Unit
 
-    override suspend fun stopSession(sessionId: String) = withContext(Dispatchers.IO) {
-        if (activeSessionId == sessionId) {
-            stopActiveSession()
+    override suspend fun stopSession(sessionId: String) {
+        withContext(Dispatchers.IO) {
+            if (activeSessionId == sessionId) {
+                stopActiveSession()
+            }
         }
     }
 
-    override suspend fun stopActiveSession() = withContext(Dispatchers.IO) {
-        userStopRequested = true
-        val proc = activeProcess ?: return@withContext
-        runCatching {
-            proc.destroy()
-            delay(350)
-            if (proc.isAlive) proc.destroyForcibly()
+    override suspend fun stopActiveSession() {
+        withContext(Dispatchers.IO) {
+            userStopRequested = true
+            val proc = activeProcess ?: return@withContext
+            runCatching {
+                proc.destroy()
+                delay(350)
+                if (proc.isAlive) proc.destroyForcibly()
+            }
         }
     }
 
