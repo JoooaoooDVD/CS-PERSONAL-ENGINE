@@ -176,6 +176,7 @@ import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -2515,13 +2516,13 @@ private fun RootScreenHost(
     val importZipHomeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.importZipProject(uri)
     }
-    val activeHomeModelLabel = remember(state.agentKind, state.antigravityModel, state.provider, state.savedCustomProviders, state.activeCustomProviderId) {
-        val custom = state.savedCustomProviders.firstOrNull { state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId }
-        when {
-            state.agentKind == AgentKind.ANTIGRAVITY -> "antigravity · ${formatAntigravityModelName(state.antigravityModel.ifBlank { "gemini-3.8-flash-high" })}"
-            custom != null -> "${custom.name} · ${custom.model}"
-            else -> "${state.agentKind.localizedTitle()} · ${state.provider.model.ifBlank { state.provider.kind.localizedTitle() }}"
-        }
+    val customHomeProvider = state.savedCustomProviders.firstOrNull {
+        state.agentKind != AgentKind.ANTIGRAVITY && it.id == state.activeCustomProviderId
+    }
+    val activeHomeModelLabel = when {
+        state.agentKind == AgentKind.ANTIGRAVITY -> "antigravity · ${formatAntigravityModelName(state.antigravityModel.ifBlank { "gemini-3.8-flash-high" })}"
+        customHomeProvider != null -> "${customHomeProvider.name} · ${customHomeProvider.model}"
+        else -> "${state.agentKind.localizedTitle()} · ${state.provider.model.ifBlank { state.provider.kind.localizedTitle() }}"
     }
 
     BackHandler(enabled = activeNavId != "PROJECTS") {
